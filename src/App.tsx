@@ -48,8 +48,12 @@ function Shell({ selfId }: { selfId: string }) {
   }, [selfId, init, teardown]);
 
   return (
-    <>
-      {!connected && <div className="offline-banner">در حال اتصال دوباره…</div>}
+    <div className="app">
+      {!connected && (
+        <div className="offline-banner" role="status">
+          در حال اتصال دوباره…
+        </div>
+      )}
       <div
         className={panel === 'none' ? 'shell' : 'shell with-panel'}
         data-mobile-view={mobileView}
@@ -59,6 +63,6 @@ function Shell({ selfId }: { selfId: string }) {
         {panel === 'profile' && <ProfilePanel />}
         {panel === 'settings' && <SettingsPanel />}
       </div>
-    </>
+    </div>
   );
 }

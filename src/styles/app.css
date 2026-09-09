@@ -33,16 +33,30 @@ a:hover { text-decoration: underline; }
 }
 
 /* --------------------------------------------------------------- shell --- */
+/* Column layout so the offline banner takes its own row instead of floating
+   over the headers and swallowing their clicks. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
-  height: 100%;
+  /* An auto row would size to the message list's full content height, leaving
+     .message-scroll unbounded — it would never scroll internally, and focusing
+     the composer would drag the whole shell out of view. */
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 .shell.with-panel { grid-template-columns: var(--sidebar-width) 1fr var(--panel-width); }
 
 .offline-banner {
-  position: fixed; inset-inline: 0; top: 0; z-index: 50;
+  flex: 0 0 auto;
   padding: 6px 16px; text-align: center;
   background: var(--warning); color: #12191f;
   font-size: 0.85em; font-weight: 600;
@@ -51,7 +65,7 @@ a:hover { text-decoration: underline; }
 /* ------------------------------------------------------------- sidebar --- */
 .sidebar {
   display: flex; flex-direction: column;
-  min-width: 0; height: 100%;
+  min-width: 0; min-height: 0;
   background: var(--bg-sidebar);
   border-inline-end: 1px solid var(--border);
 }
@@ -82,7 +96,7 @@ a:hover { text-decoration: underline; }
 .icon-button:hover { background: var(--bg-hover); color: var(--text-primary); }
 .icon-button.active { color: var(--accent); background: var(--accent-soft); }
 
-.chat-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+.chat-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
 
 .chat-list-empty {
   padding: 48px 24px; text-align: center; color: var(--text-tertiary);
@@ -148,7 +162,7 @@ a:hover { text-decoration: underline; }
 /* ---------------------------------------------------------------- chat --- */
 .chat {
   display: flex; flex-direction: column;
-  min-width: 0; height: 100%;
+  min-width: 0; min-height: 0;
   background-color: var(--bg-chat);
   background-image: var(--bg-chat-pattern);
   background-size: 22px 22px;
@@ -174,7 +188,7 @@ a:hover { text-decoration: underline; }
 .chat-header-status.online { color: var(--accent); }
 
 .message-scroll {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   padding: 16px clamp(12px, 6vw, 64px);
   display: flex; flex-direction: column; gap: 2px;
 }
@@ -281,10 +295,12 @@ a:hover { text-decoration: underline; }
   width: 40px; height: 40px; flex: 0 0 auto;
   border-radius: 50%; background: var(--accent); color: #fff;
 }
+.media-file .file-body { display: grid; min-width: 0; }
 .media-file .file-name {
-  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.media-file .file-meta { font-size: 0.8em; color: var(--text-secondary); }
+.media-file .file-meta { display: block; font-size: 0.8em; color: var(--text-secondary); }
 .media-sticker { font-size: 4.5em; line-height: 1; }
 
 .lightbox {
@@ -352,7 +368,7 @@ a:hover { text-decoration: underline; }
 /* --------------------------------------------------------------- panel --- */
 .panel {
   display: flex; flex-direction: column;
-  height: 100%; min-width: 0;
+  min-height: 0; min-width: 0;
   background: var(--bg-sidebar);
   border-inline-start: 1px solid var(--border);
   overflow-y: auto;
@@ -525,7 +541,7 @@ a:hover { text-decoration: underline; }
   .shell.with-panel { grid-template-columns: var(--sidebar-width) 1fr; }
   .panel {
     position: fixed; inset-block: 0; inset-inline-end: 0; z-index: 40;
-    width: min(360px, 100%); box-shadow: var(--shadow-lg);
+    width: min(360px, 100%); height: 100%; box-shadow: var(--shadow-lg);
   }
 }
 

@@ -98,6 +98,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     set({ busy: true, error: null });
     const result = await auth.sendCode(creds.apiId, creds.apiHash, phone);
+    if (result.status === 'alreadyAuthorized') {
+      set({ busy: false, stage: 'ready', user: await auth.getMe(), error: null });
+      return;
+    }
     if (result.status === 'error') {
       // Bad credentials are unrecoverable from the phone step — go back a screen.
       if (result.code === 'API_ID_INVALID' && !credentialsAreFixed()) {

@@ -37,37 +37,113 @@
 می‌زند؛ پروژه فقط فایل‌های استاتیک است. جزئیات بیشتر در
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## راه‌اندازی
+## راه‌اندازی گام‌به‌گام
+
+پیش‌نیاز: Node نسخهٔ ۲۰ یا بالاتر.
+
+### ۱. نصب
 
 ```bash
 npm install
-cp .env.example .env      # اختیاری
-npm run dev               # http://localhost:5173
 ```
 
-### کلید API
+### ۲. بررسی دسترسی شبکه (مهم‌ترین گام)
+
+```bash
+npm run doctor
+```
+
+این دستور به هر پنج دیتاسنتر وب تلگرام وصل می‌شود و می‌گوید کدام‌ها جواب
+می‌دهند. اگر همه ❌ شدند، برنامه از این شبکه بالا نمی‌آید — این محدودیت شبکه
+است نه ایراد کد. مرورگری که لیلیکا را اجرا می‌کند باید بتواند به
+`wss://*.web.telegram.org` وصل شود.
+
+### ۳. گرفتن کلید API
 
 هر نصب باید `api_id` و `api_hash` **خودش** را داشته باشد؛ تلگرام کلیدهای
-مشترک بین چند برنامه را مسدود می‌کند.
+مشترک بین چند برنامه را مسدود می‌کند و این کلید فقط با حساب تلگرام خودت
+ساخته می‌شود.
 
-۱. به [my.telegram.org](https://my.telegram.org) برو → API development tools
-۲. یک برنامه بساز و `api_id` / `api_hash` را بردار
-۳. یا در `.env` بگذار:
+۱. برو به [my.telegram.org](https://my.telegram.org) و با شمارهٔ خودت وارد شو
+۲. API development tools → یک برنامه بساز (نام و پلتفرم دلخواه)
+۳. `api_id` و `api_hash` را بردار
+
+بعد یا در `.env` بگذار:
 
 ```env
 VITE_TG_API_ID=1234567
 VITE_TG_API_HASH=0123456789abcdef0123456789abcdef
 ```
 
-اگر `.env` خالی باشد، برنامه در اولین اجرا صفحهٔ ورود کلید را نشان می‌دهد و
-مقدار را فقط در `localStorage` همان مرورگر نگه می‌دارد.
+یا هیچ کاری نکن — برنامه در اولین اجرا خودش می‌پرسد و مقدار را فقط در
+`localStorage` همان مرورگر نگه می‌دارد.
 
-### ساخت خروجی
+### ۴. اجرا
 
 ```bash
-npm run build     # dist/ — فایل استاتیک، روی هر CDN یا nginx قابل میزبانی است
-npm run preview
+npm run dev
 ```
+
+`http://localhost:5173` را باز کن. مسیر ورود:
+
+```
+شماره موبایل (با کد کشور: ‎+98…)
+        ↓  تلگرام کد می‌فرستد — اگر روی گوشی‌ات تلگرام نصب باشد
+        ↓  کد داخل خود تلگرام می‌آید، وگرنه پیامک می‌شود
+کد ۵ رقمی  →  (اگر رمز دومرحله‌ای داری) رمز  →  فهرست گفتگوها
+```
+
+بعد از ورود، نشست در همان مرورگر ذخیره می‌شود و دفعهٔ بعد مستقیم بالا می‌آید.
+
+### ۵. باز کردن از گوشی روی همان وای‌فای
+
+```bash
+npm run dev:host
+```
+
+آدرسی که چاپ می‌کند (مثل `http://192.168.1.20:5173`) را در مرورگر گوشی باز
+کن. برای اتصال WSS نیازی به HTTPS نیست، پس همین کافی است.
+
+### ۶. استقرار روی سرور
+
+```bash
+npm run build          # خروجی در dist/ — فقط فایل استاتیک
+```
+
+`dist/` را روی هر میزبان استاتیکی بگذار، یا با Docker:
+
+```bash
+docker build -t lilika \
+  --build-arg VITE_TG_API_ID=1234567 \
+  --build-arg VITE_TG_API_HASH=0123456789abcdef0123456789abcdef .
+docker run -p 8080:80 lilika
+```
+
+## اپ اندروید
+
+پوستهٔ اندروید با Capacitor آماده است: همین build وب داخل APK بسته می‌شود و
+در WebView سیستم اجرا می‌شود — دقیقاً همان مسیر شبکه، بدون کد بومی اضافه.
+
+روی دستگاهی که **Android Studio و Android SDK** دارد:
+
+```bash
+npm run android:sync    # build وب + کپی به پروژهٔ اندروید
+npm run android:open    # باز کردن در Android Studio
+```
+
+بعد در Android Studio: Build → Build APK.  یا از خط فرمان، وقتی `ANDROID_HOME`
+تنظیم باشد:
+
+```bash
+cd android && ./gradlew assembleDebug
+# خروجی: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+نام برنامه، آیکون و شناسهٔ بسته در `capacitor.config.ts` و
+`android/app/src/main/res/` قابل تغییرند.
+
+> پروژهٔ `android/` ساخته و در مخزن ثبت شده، ولی APK در این محیط ساخته نشده
+> چون Android SDK نصب نیست — آن گام روی دستگاه خودت انجام می‌شود.
 
 ## برندسازی
 
@@ -96,14 +172,40 @@ npm run preview
   [شرایط استفاده از API](https://core.telegram.org/api/terms) را رعایت کن؛
   ارسال انبوه و اسپم به مسدودی `api_id` منجر می‌شود.
 
+## تست
+
+```bash
+npm run typecheck        # بررسی نوع‌ها
+npm run build            # typecheck + خروجی production
+npm run harness -- out/  # اجرای رابط کاربری با دادهٔ نمونه و گرفتن اسکرین‌شات
+```
+
+`npm run harness` رابط کاربریِ بعد از ورود را **بدون اتصال به تلگرام** اجرا
+می‌کند: دادهٔ نمونه از `tools/fixtures.mjs` مستقیم داخل استورها ریخته می‌شود و
+اسکریپت از فهرست گفتگو، انواع حباب پیام، پنل‌ها، پوستهٔ روشن و عرض موبایل
+اسکرین‌شات می‌گیرد و هر خطای کنسول را گزارش می‌کند. برای این کار build توسعه
+استورها را روی `window.__lilika` می‌گذارد (در خروجی production حذف می‌شود).
+
+پیش از اجرا `npm run dev` را در ترمینال دیگری بالا نگه دار، و یک بار مرورگر
+تست را نصب کن:
+
+```bash
+npx playwright install chromium
+```
+
 ## دستورها
 
 | دستور | کار |
 | --- | --- |
-| `npm run dev` | سرور توسعه |
-| `npm run build` | typecheck + خروجی production |
+| `npm run dev` | سرور توسعه روی localhost |
+| `npm run dev:host` | همان، ولی روی کل شبکه (برای باز کردن از گوشی) |
+| `npm run doctor` | بررسی دسترسی شبکه به دیتاسنترهای تلگرام |
+| `npm run build` | typecheck + خروجی production در `dist/` |
 | `npm run preview` | سرو کردن `dist/` |
 | `npm run typecheck` | فقط بررسی نوع‌ها |
+| `npm run harness` | اجرای رابط کاربری با دادهٔ نمونه + اسکرین‌شات |
+| `npm run android:sync` | build وب و همگام‌سازی با پروژهٔ اندروید |
+| `npm run android:open` | باز کردن پروژهٔ اندروید در Android Studio |
 
 ## پروانه
 

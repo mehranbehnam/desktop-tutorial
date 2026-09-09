@@ -13,6 +13,8 @@ import { idToString } from './utils';
 
 export type SendCodeResult =
   | { status: 'codeSent'; phoneCodeHash: string; viaApp: boolean; timeout: number }
+  /** Telegram signed the device in without a code. */
+  | { status: 'alreadyAuthorized' }
   | { status: 'error'; code: AuthErrorCode; message: string };
 
 export type SignInResult =
@@ -99,6 +101,11 @@ export async function sendCode(
       timeout: 120,
     };
   } catch (err) {
+    // Telegram can authorise a trusted device instead of sending a code; GramJS
+    // reports that as a plain Error, and the caller should just re-check auth.
+    if (String((err as Error)?.message).includes('logged in right after')) {
+      return { status: 'alreadyAuthorized' };
+    }
     return { status: 'error', ...describeError(err) };
   }
 }

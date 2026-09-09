@@ -147,7 +147,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
 
     unsubscribe?.();
-    unsubscribe = subscribe(selfId, handlers);
+    try {
+      unsubscribe = subscribe(selfId, handlers);
+    } catch {
+      set({ connected: false });
+    }
 
     // Expire stale "typing" chips even when no further update arrives.
     typingTimer = window.setInterval(() => {

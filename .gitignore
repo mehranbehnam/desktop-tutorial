@@ -6,3 +6,5 @@ dist/
 .DS_Store
 .vite/
 tsconfig.tsbuildinfo
+harness-out/
+android/app/src/main/assets/public/

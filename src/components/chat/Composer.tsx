@@ -23,12 +23,26 @@ export function Composer({ peer }: { peer: Peer }) {
   const lastTypingRef = useRef(0);
   const [pending, setPending] = useState(false);
 
-  // Grow with content up to the CSS max-height, then scroll internally.
+  // Grow with content up to the CSS max-height, then scroll internally. The
+  // observer matters as much as the draft dependency: opening a side panel
+  // narrows the box, and text that re-wraps would otherwise be clipped.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+
+    const resize = () => {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    resize();
+
+    // Observe the row, not the textarea: resizing the textarea is this
+    // callback's own side effect, and watching it would feed back on itself.
+    const row = el.parentElement;
+    if (!row) return;
+    const observer = new ResizeObserver(resize);
+    observer.observe(row);
+    return () => observer.disconnect();
   }, [draft]);
 
   useEffect(() => {

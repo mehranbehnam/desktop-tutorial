@@ -197,8 +197,8 @@ export async function forwardMessages(
 
 /** Fires the "…is typing" indicator on the other side. Safe to call often. */
 export async function setTyping(peerId: string, active: boolean): Promise<void> {
-  const client = getClient();
   try {
+    const client = getClient();
     await client.invoke(
       new Api.messages.SetTyping({
         peer: await client.getInputEntity(peerId),

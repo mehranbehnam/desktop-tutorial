@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Icon } from '../common/Icon';
+import { Spinner } from '../common/Spinner';
 import { formatSize, formatDuration, toFaDigits } from '../../lib/format';
 import { downloadMessageMedia, cachedUrl, saveAs } from '../../lib/telegram/media';
 import type { Message } from '../../lib/telegram/types';
@@ -57,11 +58,24 @@ export function MediaContent({ message, onOpenImage }: Props) {
 
   switch (media.kind) {
     case 'photo':
-    case 'gif':
+    case 'gif': {
+      const source = url ?? media.thumbUrl;
+      // An empty src makes the browser re-request the page, so show a box
+      // instead when neither the file nor its blur placeholder is here yet.
+      if (!source) {
+        return (
+          <div
+            className="media-placeholder"
+            style={{ aspectRatio: media.width && media.height ? `${media.width}/${media.height}` : '4/3' }}
+          >
+            <Spinner />
+          </div>
+        );
+      }
       return (
         <img
           className="media-photo"
-          src={url ?? media.thumbUrl ?? ''}
+          src={source}
           alt={message.text || 'تصویر'}
           width={media.width}
           height={media.height}
@@ -69,6 +83,7 @@ export function MediaContent({ message, onOpenImage }: Props) {
           onClick={() => url && onOpenImage(url)}
         />
       );
+    }
 
     case 'sticker':
       return url ? (
@@ -102,7 +117,7 @@ export function MediaContent({ message, onOpenImage }: Props) {
           <span className="file-icon">
             <Icon name={loading ? 'clock' : 'download'} size={18} />
           </span>
-          <span>
+          <span className="file-body">
             <span className="file-name">
               {media.kind === 'voice' ? 'پیام صوتی' : (media.fileName ?? 'فایل صوتی')}
             </span>
@@ -123,7 +138,7 @@ export function MediaContent({ message, onOpenImage }: Props) {
           <span className="file-icon">
             <Icon name={url ? 'download' : loading ? 'clock' : 'file'} size={18} />
           </span>
-          <span style={{ minWidth: 0 }}>
+          <span className="file-body">
             <span className="file-name">{media.fileName ?? 'فایل'}</span>
             <span className="file-meta">
               {loading ? `${toFaDigits(Math.round(progress * 100))}٪` : formatSize(media.size)}

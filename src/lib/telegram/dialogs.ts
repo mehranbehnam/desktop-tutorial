@@ -212,8 +212,8 @@ export async function markRead(peerId: string, maxId: number): Promise<void> {
 
 /** Full profile for the right-hand panel: bio, member count, common chats. */
 export async function fetchFullPeer(peerId: string): Promise<{ about?: string; membersCount?: number }> {
-  const client = getClient();
   try {
+    const client = getClient();
     const entity = await client.getEntity(peerId);
     if (entity instanceof Api.User) {
       const full = await client.invoke(
