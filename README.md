@@ -124,26 +124,40 @@ docker run -p 8080:80 lilika
 پوستهٔ اندروید با Capacitor آماده است: همین build وب داخل APK بسته می‌شود و
 در WebView سیستم اجرا می‌شود — دقیقاً همان مسیر شبکه، بدون کد بومی اضافه.
 
-روی دستگاهی که **Android Studio و Android SDK** دارد:
+### راه ۱: ساخت روی GitHub Actions (بدون نصب چیزی)
+
+ورک‌فلوی `.github/workflows/android.yml` روی رانرهای گیت‌هاب اجرا می‌شود که
+Android SDK از پیش دارند. با هر push روی فایل‌های مرتبط خودکار اجرا می‌شود، یا
+از تب **Actions → android → Run workflow** دستی اجرایش کن. بعد از اتمام، APK
+را از بخش **Artifacts** همان run دانلود کن (`lilika-debug-apk`).
+
+اگر `TG_API_ID` و `TG_API_HASH` را در Secrets مخزن بگذاری، داخل APK قرار
+می‌گیرند؛ وگرنه برنامه در اولین اجرا روی گوشی خودش می‌پرسد.
+
+### راه ۲: ساخت روی سیستم خودت
+
+نیاز به Android Studio یا Android SDK دارد:
 
 ```bash
 npm run android:sync    # build وب + کپی به پروژهٔ اندروید
-npm run android:open    # باز کردن در Android Studio
+npm run android:open    # باز کردن در Android Studio  →  Build → Build APK
 ```
 
-بعد در Android Studio: Build → Build APK.  یا از خط فرمان، وقتی `ANDROID_HOME`
-تنظیم باشد:
+یا از خط فرمان، وقتی `ANDROID_HOME` تنظیم باشد:
 
 ```bash
 cd android && ./gradlew assembleDebug
 # خروجی: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### نصب روی گوشی
+
+APK دیباگ با کلید دیباگ امضا شده و برای استفادهٔ شخصی نصب می‌شود (باید
+«نصب از منابع ناشناس» را برای مرورگر یا فایل‌منیجر فعال کنی). برای انتشار
+عمومی باید یک keystore بسازی و `assembleRelease` را با آن امضا کنی.
+
 نام برنامه، آیکون و شناسهٔ بسته در `capacitor.config.ts` و
 `android/app/src/main/res/` قابل تغییرند.
-
-> پروژهٔ `android/` ساخته و در مخزن ثبت شده، ولی APK در این محیط ساخته نشده
-> چون Android SDK نصب نیست — آن گام روی دستگاه خودت انجام می‌شود.
 
 ## برندسازی
 
