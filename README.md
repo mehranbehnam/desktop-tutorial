@@ -7,7 +7,7 @@
 می‌بیند و پیام‌هایش با کلاینت‌های رسمی تلگرام کاملاً همگام است. تفاوت در
 پوسته، زبان و تجربهٔ کاربری است، نه در شبکه.
 
-![وضعیت](https://img.shields.io/badge/build-passing-2ea6a0) ![پروتکل](https://img.shields.io/badge/MTProto-GramJS-2ea6a0)
+[![android](https://github.com/mehranbehnam/desktop-tutorial/actions/workflows/android.yml/badge.svg?branch=claude/telegram-messenger-platform-sv8vfg)](https://github.com/mehranbehnam/desktop-tutorial/actions/workflows/android.yml) ![پروتکل](https://img.shields.io/badge/MTProto-GramJS-2ea6a0)
 
 ---
 
@@ -130,6 +130,10 @@ docker run -p 8080:80 lilika
 Android SDK از پیش دارند. با هر push روی فایل‌های مرتبط خودکار اجرا می‌شود، یا
 از تب **Actions → android → Run workflow** دستی اجرایش کن. بعد از اتمام، APK
 را از بخش **Artifacts** همان run دانلود کن (`lilika-debug-apk`).
+
+این مسیر تست شده است: اولین اجرا با موفقیت یک APK حدود ۴ مگابایتی ساخت
+(نصب SDK ۱۶ ثانیه، گریدل ۲ دقیقه و ۳۱ ثانیه). آرتیفکت‌ها ۹۰ روز نگه داشته
+می‌شوند.
 
 اگر `TG_API_ID` و `TG_API_HASH` را در Secrets مخزن بگذاری، داخل APK قرار
 می‌گیرند؛ وگرنه برنامه در اولین اجرا روی گوشی خودش می‌پرسد.
