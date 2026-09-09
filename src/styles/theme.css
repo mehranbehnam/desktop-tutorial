@@ -1,0 +1,127 @@
+/* Design tokens. Light values live on :root; the dark set is the default and is
+   applied through [data-theme="dark"], which main.tsx stamps before first paint. */
+
+:root {
+  --font-scale: 1;
+  --font-ui: 'Vazirmatn', 'IRANSans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.34);
+
+  --sidebar-width: 340px;
+  --panel-width: 320px;
+  --header-height: 58px;
+
+  --transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---------- dark (default) ---------- */
+:root,
+[data-theme='dark'] {
+  --bg-app: #0e1621;
+  --bg-sidebar: #17212b;
+  --bg-surface: #1c2733;
+  --bg-surface-2: #222e3a;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.09);
+  --bg-chat: #0e1621;
+  --bg-chat-pattern: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px);
+
+  --bubble-in: #1c2733;
+  --bubble-out: var(--accent-bubble);
+  --bubble-out-text: var(--text-primary);
+  --bubble-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+
+  --text-primary: #e9edf2;
+  --text-secondary: #8b98a5;
+  --text-tertiary: #6b7885;
+  --text-on-accent: #ffffff;
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --danger: #ef5350;
+  --success: #4fae5f;
+  --warning: #e6a23c;
+
+  --scrollbar: rgba(255, 255, 255, 0.14);
+}
+
+/* ---------- light ---------- */
+[data-theme='light'] {
+  --bg-app: #ffffff;
+  --bg-sidebar: #ffffff;
+  --bg-surface: #f4f6f8;
+  --bg-surface-2: #eaeef2;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.07);
+  --bg-chat: #eef2f5;
+  --bg-chat-pattern: radial-gradient(circle at 20% 20%, rgba(0, 0, 0, 0.018) 0 1px, transparent 1px);
+
+  --bubble-in: #ffffff;
+  --bubble-out: var(--accent-bubble);
+  --bubble-out-text: var(--bubble-out-ink);
+  --bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.09);
+
+  --text-primary: #12191f;
+  --text-secondary: #64717d;
+  --text-tertiary: #8b98a5;
+  --text-on-accent: #ffffff;
+
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+
+  --danger: #d93025;
+  --success: #2e7d32;
+  --warning: #b8860b;
+
+  --scrollbar: rgba(0, 0, 0, 0.18);
+}
+
+/* ---------- accents ---------- */
+:root,
+[data-accent='teal'] {
+  --accent: #2ea6a0;
+  --accent-strong: #248b86;
+  --accent-soft: rgba(46, 166, 160, 0.14);
+  --accent-bubble: #21615e;
+}
+[data-accent='violet'] {
+  --accent: #7c6bd8;
+  --accent-strong: #6555c4;
+  --accent-soft: rgba(124, 107, 216, 0.16);
+  --accent-bubble: #4a3f85;
+}
+[data-accent='rose'] {
+  --accent: #d9557f;
+  --accent-strong: #c04368;
+  --accent-soft: rgba(217, 85, 127, 0.16);
+  --accent-bubble: #83364f;
+}
+[data-accent='amber'] {
+  --accent: #d99a2b;
+  --accent-strong: #bd8320;
+  --accent-soft: rgba(217, 154, 43, 0.16);
+  --accent-bubble: #7d5a1c;
+}
+[data-accent='blue'] {
+  --accent: #4a90d9;
+  --accent-strong: #3a78bb;
+  --accent-soft: rgba(74, 144, 217, 0.16);
+  --accent-bubble: #2f5680;
+}
+
+/* Light theme keeps white on the accent for buttons and badges; only the
+   outgoing bubble gets a tinted background, so it needs dark ink of its own. */
+[data-theme='light'][data-accent='teal'] { --accent-bubble: #d5f0ee; --bubble-out-ink: #0d3b39; }
+[data-theme='light'][data-accent='violet'] { --accent-bubble: #e4e0f9; --bubble-out-ink: #2a2258; }
+[data-theme='light'][data-accent='rose'] { --accent-bubble: #fadfe8; --bubble-out-ink: #5c1e33; }
+[data-theme='light'][data-accent='amber'] { --accent-bubble: #f8ead0; --bubble-out-ink: #4d3708; }
+[data-theme='light'][data-accent='blue'] { --accent-bubble: #dbe8f7; --bubble-out-ink: #1a3452; }
