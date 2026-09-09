@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # Needed to publish the APK as a release asset.
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -76,3 +80,20 @@ jobs:
           name: lilika-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # An artifact downloads as a zip, which a phone cannot install. A release
+      # asset is the raw file, so this rolling release gives a stable URL that
+      # Android can open directly.
+      - name: Publish APK to the rolling release
+        if: github.ref_name == 'claude/telegram-messenger-platform-sv8vfg' || github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk lilika-debug.apk
+          # Replace the previous release so the download URL never changes.
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest lilika-debug.apk \
+            --title 'LiLika — debug APK' \
+            --notes "Debug build of ${GITHUB_SHA:0:7} on $(date -u +%Y-%m-%d). Debug-signed: enable install from unknown sources." \
+            --prerelease \
+            --target "$GITHUB_SHA"
