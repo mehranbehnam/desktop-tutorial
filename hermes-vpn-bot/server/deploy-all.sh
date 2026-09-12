@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Fully automated deploy: installs 3x-ui, sets panel creds, writes the bot
-# code, creates a VLESS+Reality inbound, configures .env, and starts the bot
-# as a systemd service. Run as root on the VPS.
+# Fully automated deploy: installs 3x-ui, reads its auto-generated panel
+# credentials + API token, writes the bot code, creates a VLESS+Reality
+# inbound, configures .env, and starts the bot as a systemd service.
+# Run as root on the VPS.
 #
 # Usage:
 #   BOT_TOKEN=... ADMIN_IDS=... CARD_NUMBER=... CARD_OWNER=... bash deploy-all.sh
 #
-# Optional overrides: PANEL_USERNAME, PANEL_PASSWORD, PANEL_PORT (random
-# secure values are generated if not given), REALITY_SNI, INBOUND_PORT.
+# Optional overrides: REALITY_SNI, INBOUND_PORT.
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then echo "Run as root" >&2; exit 1; fi
@@ -36,8 +36,9 @@ ufw --force enable
 
 echo "==> Installing 3x-ui"
 # The installer auto-generates a strong random username/password/port/base-path
-# and writes them to /etc/x-ui/install-result.env — we use those directly rather
-# than trying to force our own via the CLI (fragile across panel versions).
+# plus an API token, and writes them to /etc/x-ui/install-result.env — newer
+# panel versions require that Bearer token for programmatic API access (the
+# cookie-session /login endpoint returns a bare 403 for non-browser clients).
 bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh) <<< $'\n'
 
 echo "==> Reading auto-generated panel credentials"
@@ -59,12 +60,17 @@ PANEL_USERNAME=$(get_val username)
 PANEL_PASSWORD=$(get_val password)
 PANEL_PORT=$(get_val port)
 WEB_BASE_PATH=$(get_val webBasePath)
+API_TOKEN=$(get_val apiToken)
+[[ -z "$API_TOKEN" ]] && API_TOKEN=$(get_val api_token)
+[[ -z "$API_TOKEN" ]] && API_TOKEN=$(get_val token)
 : "${PANEL_USERNAME:?Could not read panel username from $RESULT_FILE}"
 : "${PANEL_PASSWORD:?Could not read panel password from $RESULT_FILE}"
 : "${PANEL_PORT:?Could not read panel port from $RESULT_FILE}"
+: "${API_TOKEN:?Could not read API token from $RESULT_FILE}"
 
 XUI_BASE_URL="http://127.0.0.1:${PANEL_PORT}"
 [[ -n "${WEB_BASE_PATH:-}" ]] && XUI_BASE_URL="${XUI_BASE_URL}/${WEB_BASE_PATH}"
+SERVER_IP=$(curl -s https://ifconfig.me || hostname -I | awk '{print $1}')
 
 ufw allow "${PANEL_PORT}/tcp"
 
@@ -95,9 +101,17 @@ CARD_NUMBER = os.getenv("CARD_NUMBER", "0000-0000-0000-0000")
 CARD_OWNER = os.getenv("CARD_OWNER", "SET CARD_OWNER IN .env")
 
 XUI_BASE_URL = os.getenv("XUI_BASE_URL", "http://127.0.0.1:2053")
+# Preferred auth: an API token (Authorization: Bearer ...) — newer 3x-ui
+# versions print one at install time and reject cookie-session /login for
+# non-browser clients. username/password are kept as a fallback for older
+# panel versions that only support the cookie-login flow.
+XUI_API_TOKEN = os.getenv("XUI_API_TOKEN", "")
 XUI_USERNAME = os.getenv("XUI_USERNAME", "admin")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "admin")
 XUI_INBOUND_ID = int(os.getenv("XUI_INBOUND_ID", "1"))
+# Public host/IP clients connect to — usually different from XUI_BASE_URL,
+# which points at 127.0.0.1 so the panel API stays localhost-only.
+XUI_PUBLIC_HOST = os.getenv("XUI_PUBLIC_HOST", "")
 # Optional: base URL for a subscription link if you expose one via the panel/sub server.
 XUI_SUB_BASE_URL = os.getenv("XUI_SUB_BASE_URL", "")
 
@@ -799,14 +813,27 @@ class XUIError(RuntimeError):
 
 
 class XUIClient:
-    def __init__(self, base_url: str = None, username: str = None, password: str = None):
+    def __init__(
+        self,
+        base_url: str = None,
+        username: str = None,
+        password: str = None,
+        api_token: str = None,
+    ):
         self.base_url = (base_url or config.XUI_BASE_URL).rstrip("/")
         self.username = username or config.XUI_USERNAME
         self.password = password or config.XUI_PASSWORD
+        self.api_token = api_token if api_token is not None else config.XUI_API_TOKEN
         self.session = requests.Session()
-        self._logged_in = False
+        self._authed = False
+        if self.api_token:
+            self.session.headers["Authorization"] = f"Bearer {self.api_token}"
+            self._authed = True
 
     def _login(self):
+        if self.api_token:
+            self._authed = True
+            return
         r = self.session.post(
             f"{self.base_url}/login",
             data={"username": self.username, "password": self.password},
@@ -816,14 +843,14 @@ class XUIClient:
         body = r.json()
         if not body.get("success"):
             raise XUIError(f"XUI login failed: {body}")
-        self._logged_in = True
+        self._authed = True
 
     def _request(self, method: str, path: str, **kwargs):
-        if not self._logged_in:
+        if not self._authed:
             self._login()
         r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-        if r.status_code == 401:
-            # session expired, retry once after re-login
+        if r.status_code == 401 and not self.api_token:
+            # session expired, retry once after re-login (token auth never expires this way)
             self._login()
             r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
         r.raise_for_status()
@@ -907,8 +934,9 @@ class XUIClient:
         reality = stream["realitySettings"]
         port = inbound["port"]
 
-        # server address: reuse the panel host from base_url
-        host = self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
+        # The panel API is reached over localhost/LAN for security, but the
+        # client link must point at the server's public IP/domain.
+        host = config.XUI_PUBLIC_HOST or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
 
         params = {
             "type": stream.get("network", "tcp"),
@@ -936,19 +964,21 @@ mkdir -p "$APP_DIR/server"
 cat > "$APP_DIR/server/setup_inbound.py" << 'PYEOF'
 #!/usr/bin/env python3
 """
-One-time helper: logs into a freshly-installed 3x-ui panel and creates a
+One-time helper: connects to a freshly-installed 3x-ui panel and creates a
 VLESS + Reality inbound (no TLS certs to manage, good default for a small
 VPS). Prints the values you need to put in bot/.env when it's done.
+
+Auth: newer 3x-ui versions print an API Token at install time (see
+/etc/x-ui/install-result.env) and require it for programmatic access —
+the cookie-session /login endpoint rejects non-browser clients with a
+plain 403. Pass that token with --api-token.
 
 Usage:
     pip install requests
     python3 setup_inbound.py \
-        --url http://SERVER_IP:2053 \
-        --username admin --password admin \
-        --port 443 --remark "main" --sni www.microsoft.com
-
-Run this AFTER you've set a real panel username/password via the `x-ui`
-menu on the server (don't leave admin/admin).
+        --url http://127.0.0.1:PANEL_PORT/WEB_BASE_PATH \
+        --api-token YOUR_API_TOKEN \
+        --port 443 --sni www.microsoft.com
 """
 import argparse
 import json
@@ -958,12 +988,10 @@ import uuid
 import requests
 
 
-def login(session: requests.Session, base_url: str, username: str, password: str) -> None:
-    r = session.post(f"{base_url}/login", data={"username": username, "password": password}, timeout=15)
-    r.raise_for_status()
-    body = r.json()
-    if not body.get("success", False):
-        raise RuntimeError(f"Login failed: {body}")
+def build_session(api_token: str) -> requests.Session:
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {api_token}"
+    return session
 
 
 def get_reality_keypair(session: requests.Session, base_url: str) -> dict:
@@ -976,7 +1004,6 @@ def get_reality_keypair(session: requests.Session, base_url: str) -> dict:
 
 
 def create_inbound(session: requests.Session, base_url: str, port: int, remark: str, sni: str, keypair: dict) -> dict:
-    client_id = str(uuid.uuid4())
     short_id = uuid.uuid4().hex[:8]
 
     settings = {
@@ -1032,19 +1059,16 @@ def create_inbound(session: requests.Session, base_url: str, port: int, remark: 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", required=True, help="e.g. http://SERVER_IP:2053 (or your custom panel port)")
-    ap.add_argument("--username", required=True)
-    ap.add_argument("--password", required=True)
+    ap.add_argument("--url", required=True, help="e.g. http://127.0.0.1:PANEL_PORT/WEB_BASE_PATH")
+    ap.add_argument("--api-token", required=True, help="from /etc/x-ui/install-result.env")
+    ap.add_argument("--public-host", default="", help="public IP/domain clients connect to (for reference only)")
     ap.add_argument("--port", type=int, default=443, help="Public port clients connect to")
     ap.add_argument("--remark", default="main")
     ap.add_argument("--sni", default="www.microsoft.com", help="Reality masking domain (a real, reachable HTTPS site)")
     args = ap.parse_args()
 
     base_url = args.url.rstrip("/")
-    session = requests.Session()
-
-    print("Logging into panel...")
-    login(session, base_url, args.username, args.password)
+    session = build_session(args.api_token)
 
     print("Generating Reality keypair...")
     keypair = get_reality_keypair(session, base_url)
@@ -1054,9 +1078,10 @@ def main() -> int:
 
     print("\n=== Done. Put these in bot/.env ===")
     print(f"XUI_BASE_URL={base_url}")
-    print(f"XUI_USERNAME={args.username}")
-    print(f"XUI_PASSWORD={args.password}")
+    print(f"XUI_API_TOKEN={args.api_token}")
     print(f"XUI_INBOUND_ID={inbound['id']}")
+    if args.public_host:
+        print(f"XUI_PUBLIC_HOST={args.public_host}")
     print("\n(The bot creates/deletes clients inside this inbound automatically via the panel API.)")
     return 0
 
@@ -1071,14 +1096,12 @@ python3 -m venv "$APP_DIR/venv"
 
 echo "==> Creating VLESS+Reality inbound"
 INBOUND_OUT=$("$APP_DIR/venv/bin/python" "$APP_DIR/server/setup_inbound.py" \
-  --url "$XUI_BASE_URL" \
-  --username "$PANEL_USERNAME" --password "$PANEL_PASSWORD" \
+  --url "$XUI_BASE_URL" --api-token "$API_TOKEN" --public-host "$SERVER_IP" \
   --port "$INBOUND_PORT" --sni "$REALITY_SNI")
 echo "$INBOUND_OUT"
 INBOUND_ID=$(echo "$INBOUND_OUT" | grep XUI_INBOUND_ID | cut -d= -f2)
 
 echo "==> Writing bot/.env"
-SERVER_IP=$(curl -s https://ifconfig.me || hostname -I | awk '{print $1}')
 cat > "$APP_DIR/bot/.env" << ENVEOF
 BOT_TOKEN=${BOT_TOKEN}
 ADMIN_IDS=${ADMIN_IDS}
@@ -1087,16 +1110,18 @@ BOT_NAME=${BOT_NAME:-VPN Store}
 CARD_NUMBER=${CARD_NUMBER}
 CARD_OWNER=${CARD_OWNER}
 XUI_BASE_URL=${XUI_BASE_URL}
+XUI_API_TOKEN=${API_TOKEN}
 XUI_USERNAME=${PANEL_USERNAME}
 XUI_PASSWORD=${PANEL_PASSWORD}
 XUI_INBOUND_ID=${INBOUND_ID}
+XUI_PUBLIC_HOST=${SERVER_IP}
 DB_PATH=/opt/hermes-vpn-bot/bot/bot.db
 TRIAL_GB=${TRIAL_GB:-1}
 TRIAL_HOURS=${TRIAL_HOURS:-24}
 ENVEOF
 
 echo "==> systemd service"
-cat > /etc/systemd/system/hermes-vpn-bot.service << SERVICEEOF
+cat > /etc/systemd/system/hermes-vpn-bot.service << 'SERVICEEOF'
 [Unit]
 Description=Hermes VPN Telegram sales bot
 After=network.target x-ui.service
@@ -1113,6 +1138,7 @@ SERVICEEOF
 
 systemctl daemon-reload
 systemctl enable --now hermes-vpn-bot
+sleep 2
 
 cat <<SUMMARY
 
@@ -1123,4 +1149,6 @@ Bot:     systemctl status hermes-vpn-bot   (logs: journalctl -u hermes-vpn-bot -
 Reality inbound port: ${INBOUND_PORT}, SNI: ${REALITY_SNI}
 ================================================================
 SUMMARY
+
+systemctl status hermes-vpn-bot --no-pager || true
 

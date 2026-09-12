@@ -14,9 +14,17 @@ CARD_NUMBER = os.getenv("CARD_NUMBER", "0000-0000-0000-0000")
 CARD_OWNER = os.getenv("CARD_OWNER", "SET CARD_OWNER IN .env")
 
 XUI_BASE_URL = os.getenv("XUI_BASE_URL", "http://127.0.0.1:2053")
+# Preferred auth: an API token (Authorization: Bearer ...) — newer 3x-ui
+# versions print one at install time and reject cookie-session /login for
+# non-browser clients. username/password are kept as a fallback for older
+# panel versions that only support the cookie-login flow.
+XUI_API_TOKEN = os.getenv("XUI_API_TOKEN", "")
 XUI_USERNAME = os.getenv("XUI_USERNAME", "admin")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "admin")
 XUI_INBOUND_ID = int(os.getenv("XUI_INBOUND_ID", "1"))
+# Public host/IP clients connect to — usually different from XUI_BASE_URL,
+# which points at 127.0.0.1 so the panel API stays localhost-only.
+XUI_PUBLIC_HOST = os.getenv("XUI_PUBLIC_HOST", "")
 # Optional: base URL for a subscription link if you expose one via the panel/sub server.
 XUI_SUB_BASE_URL = os.getenv("XUI_SUB_BASE_URL", "")
 

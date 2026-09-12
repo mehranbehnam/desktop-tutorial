@@ -18,14 +18,27 @@ class XUIError(RuntimeError):
 
 
 class XUIClient:
-    def __init__(self, base_url: str = None, username: str = None, password: str = None):
+    def __init__(
+        self,
+        base_url: str = None,
+        username: str = None,
+        password: str = None,
+        api_token: str = None,
+    ):
         self.base_url = (base_url or config.XUI_BASE_URL).rstrip("/")
         self.username = username or config.XUI_USERNAME
         self.password = password or config.XUI_PASSWORD
+        self.api_token = api_token if api_token is not None else config.XUI_API_TOKEN
         self.session = requests.Session()
-        self._logged_in = False
+        self._authed = False
+        if self.api_token:
+            self.session.headers["Authorization"] = f"Bearer {self.api_token}"
+            self._authed = True
 
     def _login(self):
+        if self.api_token:
+            self._authed = True
+            return
         r = self.session.post(
             f"{self.base_url}/login",
             data={"username": self.username, "password": self.password},
@@ -35,14 +48,14 @@ class XUIClient:
         body = r.json()
         if not body.get("success"):
             raise XUIError(f"XUI login failed: {body}")
-        self._logged_in = True
+        self._authed = True
 
     def _request(self, method: str, path: str, **kwargs):
-        if not self._logged_in:
+        if not self._authed:
             self._login()
         r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-        if r.status_code == 401:
-            # session expired, retry once after re-login
+        if r.status_code == 401 and not self.api_token:
+            # session expired, retry once after re-login (token auth never expires this way)
             self._login()
             r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
         r.raise_for_status()
@@ -126,8 +139,9 @@ class XUIClient:
         reality = stream["realitySettings"]
         port = inbound["port"]
 
-        # server address: reuse the panel host from base_url
-        host = self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
+        # The panel API is reached over localhost/LAN for security, but the
+        # client link must point at the server's public IP/domain.
+        host = config.XUI_PUBLIC_HOST or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
 
         params = {
             "type": stream.get("network", "tcp"),
