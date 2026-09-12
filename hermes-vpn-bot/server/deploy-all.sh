@@ -17,9 +17,6 @@ if [[ $EUID -ne 0 ]]; then echo "Run as root" >&2; exit 1; fi
 : "${CARD_NUMBER:?Set CARD_NUMBER=...}"
 : "${CARD_OWNER:?Set CARD_OWNER=...}"
 
-PANEL_USERNAME=${PANEL_USERNAME:-admin_$(openssl rand -hex 3)}
-PANEL_PASSWORD=${PANEL_PASSWORD:-$(openssl rand -hex 12)}
-PANEL_PORT=${PANEL_PORT:-$(shuf -i 20000-59999 -n1)}
 REALITY_SNI=${REALITY_SNI:-www.microsoft.com}
 INBOUND_PORT=${INBOUND_PORT:-443}
 APP_DIR=/opt/hermes-vpn-bot
@@ -34,17 +31,48 @@ if ! swapon --show | grep -q '/swapfile'; then
 fi
 
 ufw allow OpenSSH
-ufw allow "${PANEL_PORT}/tcp"
 ufw allow "${INBOUND_PORT}/tcp"
 ufw --force enable
 
 echo "==> Installing 3x-ui"
+# The installer auto-generates a strong random username/password/port/base-path
+# and writes them to /etc/x-ui/install-result.env — we use those directly rather
+# than trying to force our own via the CLI (fragile across panel versions).
 bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh) <<< $'\n'
 
-echo "==> Setting panel credentials/port"
-x-ui setting -username "$PANEL_USERNAME" -password "$PANEL_PASSWORD" -port "$PANEL_PORT"
-systemctl restart x-ui
-sleep 2
+echo "==> Reading auto-generated panel credentials"
+RESULT_FILE=/etc/x-ui/install-result.env
+if [[ ! -f "$RESULT_FILE" ]]; then
+  echo "Could not find $RESULT_FILE — install may have failed, check 'x-ui status'." >&2
+  exit 1
+fi
+get_val() {
+  local line val
+  line=$(grep -iE "^${1}[[:space:]]*=" "$RESULT_FILE" | tail -1)
+  val="${line#*=}"
+  val="${val%$'\r'}"
+  val="${val%\"}"; val="${val#\"}"
+  val="${val%\'}"; val="${val#\'}"
+  printf '%s' "$val"
+}
+PANEL_USERNAME=$(get_val username)
+PANEL_PASSWORD=$(get_val password)
+PANEL_PORT=$(get_val port)
+WEB_BASE_PATH=$(get_val webBasePath)
+: "${PANEL_USERNAME:?Could not read panel username from $RESULT_FILE}"
+: "${PANEL_PASSWORD:?Could not read panel password from $RESULT_FILE}"
+: "${PANEL_PORT:?Could not read panel port from $RESULT_FILE}"
+
+XUI_BASE_URL="http://127.0.0.1:${PANEL_PORT}"
+[[ -n "${WEB_BASE_PATH:-}" ]] && XUI_BASE_URL="${XUI_BASE_URL}/${WEB_BASE_PATH}"
+
+ufw allow "${PANEL_PORT}/tcp"
+
+echo "==> Waiting for the panel to accept connections on port ${PANEL_PORT}"
+for i in $(seq 1 20); do
+  curl -s --max-time 1 -o /dev/null "http://127.0.0.1:${PANEL_PORT}/" && break
+  sleep 1
+done
 
 echo "==> Writing bot source to $APP_DIR"
 mkdir -p "$APP_DIR/bot" "$APP_DIR/server"
@@ -1043,7 +1071,7 @@ python3 -m venv "$APP_DIR/venv"
 
 echo "==> Creating VLESS+Reality inbound"
 INBOUND_OUT=$("$APP_DIR/venv/bin/python" "$APP_DIR/server/setup_inbound.py" \
-  --url "http://127.0.0.1:${PANEL_PORT}" \
+  --url "$XUI_BASE_URL" \
   --username "$PANEL_USERNAME" --password "$PANEL_PASSWORD" \
   --port "$INBOUND_PORT" --sni "$REALITY_SNI")
 echo "$INBOUND_OUT"
@@ -1058,7 +1086,7 @@ SUPPORT_USERNAME=${SUPPORT_USERNAME:-@your_support}
 BOT_NAME=${BOT_NAME:-VPN Store}
 CARD_NUMBER=${CARD_NUMBER}
 CARD_OWNER=${CARD_OWNER}
-XUI_BASE_URL=http://127.0.0.1:${PANEL_PORT}
+XUI_BASE_URL=${XUI_BASE_URL}
 XUI_USERNAME=${PANEL_USERNAME}
 XUI_PASSWORD=${PANEL_PASSWORD}
 XUI_INBOUND_ID=${INBOUND_ID}
@@ -1090,7 +1118,7 @@ cat <<SUMMARY
 
 ================================================================
 Done.
-Panel:   http://${SERVER_IP}:${PANEL_PORT}  user=${PANEL_USERNAME} pass=${PANEL_PASSWORD}
+Panel:   http://${SERVER_IP}:${PANEL_PORT}${WEB_BASE_PATH:+/${WEB_BASE_PATH}}  user=${PANEL_USERNAME} pass=${PANEL_PASSWORD}
 Bot:     systemctl status hermes-vpn-bot   (logs: journalctl -u hermes-vpn-bot -f)
 Reality inbound port: ${INBOUND_PORT}, SNI: ${REALITY_SNI}
 ================================================================
