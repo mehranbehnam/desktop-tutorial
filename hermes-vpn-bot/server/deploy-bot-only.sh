@@ -25,10 +25,21 @@ if [[ $EUID -ne 0 ]]; then echo "Run as root" >&2; exit 1; fi
 APP_DIR=/opt/hermes-vpn-bot
 
 echo "==> System packages"
-apt-get update -y
-apt-get install -y python3-venv python3-pip curl ufw
-ufw allow OpenSSH
-ufw --force enable
+# This box only makes outbound connections (to Telegram and to the VPN
+# server's panel) — nothing needs to be opened inbound here, so we don't
+# touch the local firewall (ufw/firewalld) or the cloud provider's
+# security group/list at all.
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y
+  apt-get install -y python3-venv python3-pip curl
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y python3 python3-pip curl
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y python3 python3-pip curl
+else
+  echo "No supported package manager found (apt-get/dnf/yum)." >&2
+  exit 1
+fi
 
 echo "==> Writing bot source to $APP_DIR"
 mkdir -p "$APP_DIR/bot"
