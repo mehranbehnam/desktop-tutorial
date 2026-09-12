@@ -22,17 +22,49 @@ INBOUND_PORT=${INBOUND_PORT:-443}
 APP_DIR=/opt/hermes-vpn-bot
 
 echo "==> System packages, swap, firewall"
-apt-get update -y
-apt-get install -y curl socat ufw python3-venv python3-pip openssl
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_MGR=apt
+  apt-get update -y
+  apt-get install -y curl socat ufw python3-venv python3-pip openssl
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_MGR=dnf
+  dnf install -y curl socat python3 python3-pip openssl firewalld
+  systemctl enable --now firewalld
+elif command -v yum >/dev/null 2>&1; then
+  PKG_MGR=yum
+  yum install -y curl socat python3 python3-pip openssl firewalld
+  systemctl enable --now firewalld
+else
+  echo "No supported package manager found (apt-get/dnf/yum)." >&2
+  exit 1
+fi
+
+# Opens a TCP port on whichever local firewall is present. On a cloud VM this
+# is only half the story — the provider's own network-level firewall (e.g.
+# Oracle's Security List / AWS Security Group) gates traffic before it even
+# reaches this box, and has to be opened separately in that provider's console.
+fw_allow_port() {
+  local port="$1"
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow "${port}/tcp"
+  elif command -v firewall-cmd >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="${port}/tcp"
+    firewall-cmd --reload
+  fi
+}
 
 if ! swapon --show | grep -q '/swapfile'; then
   fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-ufw allow OpenSSH
-ufw allow "${INBOUND_PORT}/tcp"
-ufw --force enable
+if [[ "$PKG_MGR" == apt ]]; then
+  ufw allow OpenSSH
+fi
+fw_allow_port "$INBOUND_PORT"
+if command -v ufw >/dev/null 2>&1; then
+  ufw --force enable
+fi
 
 echo "==> Installing 3x-ui"
 # The installer auto-generates a strong random username/password/port/base-path
@@ -72,7 +104,7 @@ XUI_BASE_URL="http://127.0.0.1:${PANEL_PORT}"
 [[ -n "${WEB_BASE_PATH:-}" ]] && XUI_BASE_URL="${XUI_BASE_URL}/${WEB_BASE_PATH}"
 SERVER_IP=$(curl -s https://ifconfig.me || hostname -I | awk '{print $1}')
 
-ufw allow "${PANEL_PORT}/tcp"
+fw_allow_port "$PANEL_PORT"
 
 echo "==> Waiting for the panel to accept connections on port ${PANEL_PORT}"
 for i in $(seq 1 20); do
@@ -1191,6 +1223,12 @@ Done.
 Panel:   http://${SERVER_IP}:${PANEL_PORT}${WEB_BASE_PATH:+/${WEB_BASE_PATH}}  user=${PANEL_USERNAME} pass=${PANEL_PASSWORD}
 Bot:     systemctl status hermes-vpn-bot   (logs: journalctl -u hermes-vpn-bot -f)
 Reality inbound port: ${INBOUND_PORT}, SNI: ${REALITY_SNI}
+
+If this box is on a cloud provider (Oracle/AWS/GCP/...), its own network
+firewall (Security List / Security Group) still needs a rule allowing
+TCP ${INBOUND_PORT} (and ${PANEL_PORT} if you want the panel reachable from
+outside) inbound from 0.0.0.0/0 — the local ufw/firewalld rules above only
+cover the OS, not that layer.
 ================================================================
 SUMMARY
 
