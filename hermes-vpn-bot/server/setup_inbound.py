@@ -17,7 +17,10 @@ Usage:
         --port 443 --sni www.microsoft.com
 """
 import argparse
+import glob
 import json
+import shutil
+import subprocess
 import sys
 import uuid
 
@@ -30,13 +33,51 @@ def build_session(api_token: str) -> requests.Session:
     return session
 
 
-def get_reality_keypair(session: requests.Session, base_url: str) -> dict:
-    r = session.post(f"{base_url}/panel/api/server/getNewX25519Cert", timeout=15)
-    r.raise_for_status()
-    body = r.json()
-    if not body.get("success", False):
-        raise RuntimeError(f"Could not generate Reality keypair: {body}")
-    return body["obj"]
+def find_xray_binary() -> str:
+    """Locate the xray-core binary x-ui manages, rather than guessing the
+    panel's API route for key generation (that route's path has changed
+    between panel versions and isn't worth chasing)."""
+    candidates = [
+        "/usr/local/x-ui/bin/xray-linux-amd64",
+        "/usr/local/x-ui/bin/xray-linux-arm64",
+        "/usr/local/x-ui/bin/xray-linux-arm64-v8a",
+        "/usr/local/x-ui/xray-linux-amd64",
+    ]
+    candidates += glob.glob("/usr/local/x-ui/bin/xray-linux-*")
+    for c in candidates:
+        if shutil.which(c):
+            return c
+    found = shutil.which("xray")
+    if found:
+        return found
+    raise RuntimeError(
+        "Could not find the xray binary (looked under /usr/local/x-ui/bin and PATH). "
+        "Run 'find / -name \"xray-linux-*\" 2>/dev/null' on the server to locate it."
+    )
+
+
+def generate_x25519_keypair() -> dict:
+    xray_bin = find_xray_binary()
+    result = subprocess.run([xray_bin, "x25519"], capture_output=True, text=True, timeout=15)
+    if result.returncode != 0:
+        raise RuntimeError(f"'{xray_bin} x25519' failed:\n{result.stderr}")
+
+    private_key = public_key = None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if ":" not in line:
+            continue
+        label, _, value = line.partition(":")
+        label = label.strip().lower()
+        value = value.strip()
+        if label in ("private key", "privatekey"):
+            private_key = value
+        elif label in ("public key", "publickey", "password"):
+            public_key = public_key or value  # some xray versions label it "Password"
+
+    if not private_key or not public_key:
+        raise RuntimeError(f"Could not parse '{xray_bin} x25519' output:\n{result.stdout}")
+    return {"privateKey": private_key, "publicKey": public_key}
 
 
 def create_inbound(session: requests.Session, base_url: str, port: int, remark: str, sni: str, keypair: dict) -> dict:
@@ -106,8 +147,8 @@ def main() -> int:
     base_url = args.url.rstrip("/")
     session = build_session(args.api_token)
 
-    print("Generating Reality keypair...")
-    keypair = get_reality_keypair(session, base_url)
+    print("Generating Reality keypair (via local xray binary)...")
+    keypair = generate_x25519_keypair()
 
     print("Creating inbound...")
     inbound = create_inbound(session, base_url, args.port, args.remark, args.sni, keypair)
