@@ -70,10 +70,13 @@ def generate_x25519_keypair() -> dict:
         label, _, value = line.partition(":")
         label = label.strip().lower()
         value = value.strip()
-        if label in ("private key", "privatekey"):
+        # Label wording varies across xray-core versions/builds, e.g.
+        # "PrivateKey:" vs "Private key:", and the public key has shown up
+        # as "PublicKey:" or "Password (PublicKey):" — match by substring.
+        if "private" in label:
             private_key = value
-        elif label in ("public key", "publickey", "password"):
-            public_key = public_key or value  # some xray versions label it "Password"
+        elif "public" in label or "password" in label:
+            public_key = value
 
     if not private_key or not public_key:
         raise RuntimeError(f"Could not parse '{xray_bin} x25519' output:\n{result.stdout}")
