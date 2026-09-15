@@ -15,10 +15,12 @@
 RAW=https://raw.githubusercontent.com/mehranbehnam/desktop-tutorial/refs/heads/claude/iran-vpn-turkey-d2hbvg/hermes-vpn-bot
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 FAILED=0
+FAILLOG=""
 
 say()  { printf '\n\033[1m=== %s ===\033[0m\n' "$1"; }
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$1"; }
-bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAILED=1; }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAILED=1; FAILLOG="$FAILLOG
+• $1"; }
 warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; }
 
 # ---------------------------------------------------------------- 1. locate
@@ -184,7 +186,7 @@ STATE=$(systemctl is-active "$SVC" 2>&1)
 journalctl -u "$SVC" -n 12 --no-pager 2>&1 | sed 's/^/     /' | tail -12
 
 if [ -n "$TOKEN" ]; then
-  ME=$(curl -s --max-time 15 "https://api.telegram.org/bot$TOKEN/getMe")
+  ME=$(curl -s --max-time 15 "https://api.telegram.org/bot$TOKEN/getMe" | tr -d ' ')
   case "$ME" in
     *'"ok":true'*) ok "telegram token valid: @$(echo "$ME" | grep -o '"username":"[^"]*' | cut -d'"' -f4)" ;;
     *) bad "telegram getMe failed -> $(echo "$ME" | head -c 120)" ;;
@@ -200,6 +202,37 @@ if [ "$FAILED" = 0 ] && [ -n "$LINK" ]; then
   echo "$LINK"
   echo
   echo "  The 🧪 تست button in the bot now returns a link like this one."
+  REPORT="✅ راه‌اندازی کامل شد و همه‌چیز کار می‌کنه.
+
+سرویس ربات فعاله و ساخت کلاینت روی پنل ایران تست شد.
+
+لینک VPN ایران (در v2rayNG / NekoBox / Streisand وارد کن):
+
+$LINK
+
+دکمه‌ی 🧪 تست هم از الان لینکی مثل همین می‌ده."
 else
   printf '  \033[31mSOMETHING IS STILL BROKEN\033[0m — see the FAIL lines above.\n'
+  REPORT="❌ راه‌اندازی کامل نشد.
+
+مراحلی که شکست خوردن:
+$(printf '%s\n' "$FAILLOG")
+
+سرویس: $(systemctl is-active "$SVC" 2>&1)
+این متن رو برای کلاد بفرست تا ادامه بده."
+fi
+
+# Send the verdict straight to Telegram so the result never has to be copied
+# out of a terminal by hand.
+ADMINS=$(get_env ADMIN_IDS)
+if [ -n "$TOKEN" ] && [ -n "$ADMINS" ]; then
+  echo
+  for id in $(echo "$ADMINS" | tr ',' ' '); do
+    SENT=$(curl -s --max-time 20 -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+      --data-urlencode "chat_id=$id" --data-urlencode "text=$REPORT" | tr -d ' ' | head -c 60)
+    case "$SENT" in
+      *'"ok":true'*) ok "result sent to your Telegram (chat $id)" ;;
+      *) warn "could not send result to Telegram chat $id: $SENT" ;;
+    esac
+  done
 fi
