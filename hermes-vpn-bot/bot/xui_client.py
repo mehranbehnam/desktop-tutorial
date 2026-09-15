@@ -1,16 +1,15 @@
-"""Thin wrapper around the x-ui / 3x-ui panel REST API.
+"""Client for the 3x-ui v3 panel API.
 
-Route layout differs between panel builds: some expose everything under
-/panel/api/inbounds/*, others only implement reads there and keep the
-mutating calls on the web-UI routes under /panel/inbound/*. Each call below
-therefore tries the known candidates in order and keeps the one that answers.
+Routes and payloads follow the panel's published OpenAPI description: clients
+are their own resource under /panel/api/clients, not an operation on an
+inbound. The panel generates the per-protocol secrets and renders the
+subscription URLs, so neither is built here.
 
-The panel also rejects requests without a browser-like User-Agent, and
-mutating calls need a real login cookie even when an API token is present.
+Authentication is the API token (Authorization: Bearer). Cookie login is only
+attempted as a fallback for builds that lack token auth — this one answers
+/login with 403 for any non-browser client.
 """
-import json
 import time
-import uuid
 
 import requests
 
@@ -43,200 +42,121 @@ class XUIClient:
         self.session.headers["Accept"] = "application/json, text/plain, */*"
         if self.api_token:
             self.session.headers["Authorization"] = f"Bearer {self.api_token}"
-        self._authed = False
+        self._authed = bool(self.api_token)
 
     def _login(self):
-        """Establish a cookie session, if this build offers one.
-
-        A token alone is enough on builds that expose the whole API under it,
-        so a refused login is only fatal when there is no token to fall back on.
-        """
+        if self._authed:
+            return
         if not (self.username and self.password):
-            if not self.api_token:
-                raise XUIError("No XUI credentials: set XUI_USERNAME/XUI_PASSWORD or XUI_API_TOKEN")
-            self._authed = True
-            return
+            raise XUIError("No XUI credentials: set XUI_API_TOKEN, or XUI_USERNAME/XUI_PASSWORD")
+        try:
+            self.session.get(self.base_url + "/", timeout=15)
+            r = self.session.post(
+                f"{self.base_url}/login",
+                data={"username": self.username, "password": self.password},
+                timeout=15,
+            )
+            r.raise_for_status()
+            body = r.json()
+        except (requests.RequestException, ValueError) as e:
+            raise XUIError(f"Cannot log in to panel at {self.base_url}: {e}") from e
+        if not body.get("success"):
+            raise XUIError(f"XUI login failed: {body}")
+        self._authed = True
 
-        creds = {"username": self.username, "password": self.password}
-        error = None
-        for as_json in (False, True):
-            try:
-                # Touch the root page first so the panel hands out its initial cookie.
-                self.session.get(self.base_url + "/", timeout=15)
-                kwargs = {"json": creds} if as_json else {"data": creds}
-                r = self.session.post(f"{self.base_url}/login", timeout=15, **kwargs)
-                r.raise_for_status()
-                body = r.json()
-            except (requests.RequestException, ValueError) as e:
-                error = f"{'json' if as_json else 'form'} login: {e}"
-                continue
-            if body.get("success"):
-                self._authed = True
-                return
-            error = f"{'json' if as_json else 'form'} login rejected: {body}"
-
-        if self.api_token:
-            self._authed = True  # token auth carries the session instead
-            return
-        raise XUIError(f"XUI login failed ({error})")
-
-    def _try_paths(self, method: str, paths: list[str], **kwargs):
-        """Call the first candidate path the panel actually implements.
-
-        A 404 means "wrong route for this build" — move on to the next one.
-        """
-        if not self._authed:
-            self._login()
-
-        last_error = None
-        for path in paths:
-            try:
-                r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-                if r.status_code in (401, 403):
-                    self._login()
-                    r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-                if r.status_code == 404:
-                    last_error = f"{path} -> 404"
-                    continue
-                r.raise_for_status()
-            except requests.RequestException as e:
-                last_error = f"{path} -> {e}"
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                last_error = f"{path} -> non-JSON response"
-                continue
-            if not body.get("success", False):
-                raise XUIError(f"XUI API error on {path}: {body}")
-            return body.get("obj")
-
-        raise XUIError(f"No working route among {paths} ({last_error})")
+    def _request(self, method: str, path: str, **kwargs):
+        self._login()
+        url = f"{self.base_url}{path}"
+        try:
+            r = self.session.request(method, url, timeout=20, **kwargs)
+            r.raise_for_status()
+            body = r.json()
+        except requests.RequestException as e:
+            raise XUIError(f"{method} {path} failed: {e}") from e
+        except ValueError as e:
+            raise XUIError(f"{method} {path} returned non-JSON: {e}") from e
+        if not body.get("success", False):
+            raise XUIError(f"XUI API error on {path}: {body.get('msg') or body}")
+        return body.get("obj")
 
     @staticmethod
-    def _build_client(client_uuid: str, email: str, gb: int, expiry_ms: int) -> dict:
-        return {
-            "id": client_uuid,
-            "email": email,
-            "limitIp": 0,
-            "totalGB": 0 if gb <= 0 else gb * 1024 * 1024 * 1024,
-            "expiryTime": expiry_ms,
-            "enable": True,
-            "tgId": "",
-            "subId": uuid.uuid4().hex[:16],
-            "flow": "xtls-rprx-vision",
-        }
+    def _expiry_ms(days: int, hours: int = 0) -> int:
+        if hours > 0:
+            return int((time.time() + hours * 3600) * 1000)
+        if days > 0:
+            return int((time.time() + days * 86400) * 1000)
+        return 0
 
     def add_client(self, email: str, gb: int, days: int = 0, inbound_id: int = None, hours: int = 0) -> dict:
-        """Create a VLESS client inside the configured inbound.
+        """Create a client and attach it to the configured inbound.
 
-        Pass either `days` or `hours` (hours wins if both are given, e.g. for
-        short trial accounts). 0/0 means no expiry.
+        Pass either `days` or `hours` (hours wins, e.g. for short trials);
+        0/0 means no expiry. The panel generates the UUID and subId itself.
 
         Returns dict with uuid, email, expiry_time (ms epoch), total_gb.
         """
         inbound_id = inbound_id or config.XUI_INBOUND_ID
-        client_uuid = str(uuid.uuid4())
-        if hours > 0:
-            expiry_ms = int((time.time() + hours * 3600) * 1000)
-        elif days > 0:
-            expiry_ms = int((time.time() + days * 86400) * 1000)
-        else:
-            expiry_ms = 0
-
-        client = self._build_client(client_uuid, email, gb, expiry_ms)
-        payload = {"id": inbound_id, "settings": json.dumps({"clients": [client]})}
-        self._try_paths(
-            "POST",
-            ["/panel/inbound/addClient", "/panel/api/inbounds/addClient"],
-            data=payload,
-        )
-        return {"uuid": client_uuid, "email": email, "expiry_time": expiry_ms, "total_gb": gb}
+        expiry_ms = self._expiry_ms(days, hours)
+        payload = {
+            "client": {
+                "email": email,
+                "totalGB": 0 if gb <= 0 else gb * 1024 * 1024 * 1024,
+                "expiryTime": expiry_ms,
+                "tgId": 0,
+                "limitIp": 0,
+                "limitHwid": 0,
+                "enable": True,
+            },
+            "inboundIds": [int(inbound_id)],
+        }
+        self._request("POST", "/panel/api/clients/add", json=payload)
+        created = self.get_client_traffic(email) or {}
+        return {
+            "uuid": created.get("uuid", ""),
+            "email": email,
+            "expiry_time": expiry_ms,
+            "total_gb": gb,
+        }
 
     def update_client(self, client_uuid: str, email: str, gb: int, days: int, inbound_id: int = None) -> dict:
-        """Renew/replace a client's quota and expiry (used for the 'renew service' flow)."""
-        inbound_id = inbound_id or config.XUI_INBOUND_ID
-        expiry_ms = 0 if days <= 0 else int((time.time() + days * 86400) * 1000)
-
-        client = self._build_client(client_uuid, email, gb, expiry_ms)
-        payload = {"id": inbound_id, "settings": json.dumps({"clients": [client]})}
-        self._try_paths(
-            "POST",
-            [
-                f"/panel/inbound/updateClient/{client_uuid}",
-                f"/panel/api/inbounds/updateClient/{client_uuid}",
-            ],
-            data=payload,
-        )
+        """Renew a client's quota and expiry (the 'renew service' flow)."""
+        expiry_ms = self._expiry_ms(days)
+        payload = {
+            "email": email,
+            "totalGB": 0 if gb <= 0 else gb * 1024 * 1024 * 1024,
+            "expiryTime": expiry_ms,
+            "enable": True,
+        }
+        self._request("POST", f"/panel/api/clients/update/{email}", json=payload)
         return {"uuid": client_uuid, "email": email, "expiry_time": expiry_ms, "total_gb": gb}
 
-    def delete_client(self, inbound_id: int, client_uuid: str):
-        self._try_paths(
-            "POST",
-            [
-                f"/panel/inbound/{inbound_id}/delClient/{client_uuid}",
-                f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
-            ],
-        )
+    def delete_client(self, inbound_id: int, client_uuid: str, email: str = None):
+        """Delete a client. The panel addresses clients by email, not UUID."""
+        if not email:
+            raise XUIError("delete_client needs the client's email on this panel version")
+        self._request("POST", f"/panel/api/clients/del/{email}")
 
     def get_client_traffic(self, email: str) -> dict | None:
-        return self._try_paths(
-            "GET",
-            [
-                f"/panel/api/inbounds/getClientTraffics/{email}",
-                f"/panel/inbound/getClientTraffics/{email}",
-            ],
-        )
+        try:
+            return self._request("GET", f"/panel/api/clients/traffic/{email}")
+        except XUIError:
+            return None
 
     def get_inbound(self, inbound_id: int = None) -> dict:
-        """Fetch one inbound, falling back to filtering the full list.
-
-        /panel/api/inbounds/list is the one route confirmed present on every
-        build we've seen, so it is the reliable fallback.
-        """
         inbound_id = inbound_id or config.XUI_INBOUND_ID
-        try:
-            return self._try_paths(
-                "GET",
-                [f"/panel/api/inbounds/get/{inbound_id}", f"/panel/inbound/get/{inbound_id}"],
-            )
-        except XUIError:
-            inbounds = self._try_paths("GET", ["/panel/api/inbounds/list"]) or []
-            for inbound in inbounds:
-                if inbound.get("id") == inbound_id:
-                    return inbound
-            raise XUIError(f"Inbound {inbound_id} not found in panel inbound list")
+        return self._request("GET", f"/panel/api/inbounds/get/{inbound_id}")
 
     def build_vless_link(self, client_uuid: str, email: str, remark: str = "") -> str:
-        """Builds a vless:// link from the inbound's Reality stream settings.
+        """Return the client's connection URL as the panel renders it.
 
-        Good enough for manual copy/paste into v2rayNG / NekoBox / Streisand etc.
+        The panel knows the inbound's advertised hosts, Reality keys and
+        protocol, so its own link is authoritative — including for inbounds
+        that are not Reality at all.
         """
-        inbound = self.get_inbound()
-        try:
-            stream = json.loads(inbound["streamSettings"])
-            reality = stream["realitySettings"]
-            port = inbound["port"]
-        except (KeyError, ValueError, TypeError) as e:
-            raise XUIError(f"Inbound {inbound.get('id')} is not a Reality inbound: {e}") from e
-
-        # The panel API is reached over localhost/LAN for security, but the
-        # client link must point at the server's public IP/domain.
-        host = config.XUI_PUBLIC_HOST or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
-
-        try:
-            params = {
-                "type": stream.get("network", "tcp"),
-                "security": "reality",
-                "pbk": reality["settings"]["publicKey"],
-                "fp": reality["settings"].get("fingerprint", "chrome"),
-                "sni": reality["serverNames"][0],
-                "sid": reality["shortIds"][0],
-                "spx": reality["settings"].get("spiderX", "/"),
-                "flow": "xtls-rprx-vision",
-            }
-        except (KeyError, IndexError) as e:
-            raise XUIError(f"Reality settings incomplete on inbound: missing {e}") from e
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        tag = remark or email
-        return f"vless://{client_uuid}@{host}:{port}?{query}#{tag}"
+        links = self._request("GET", f"/panel/api/clients/links/{email}") or []
+        if not links:
+            raise XUIError(f"panel returned no connection link for {email}")
+        link = links[0]
+        if remark:
+            link = link.split("#", 1)[0] + "#" + remark
+        return link

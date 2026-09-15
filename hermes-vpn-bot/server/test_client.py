@@ -57,7 +57,7 @@ except Exception as e:
 
 if "--keep" not in sys.argv:
     try:
-        client.delete_client(config.XUI_INBOUND_ID, created["uuid"])
+        client.delete_client(config.XUI_INBOUND_ID, created["uuid"], email=email)
         print("\ncleanup: test client deleted (pass --keep to retain it)")
     except Exception as e:
         print(f"\ncleanup: could not delete {created['uuid']}: {e}")
