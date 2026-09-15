@@ -110,12 +110,13 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
             email = f"user{order['tg_id']}-order{order_id}"
             client = xui.add_client(email=email, gb=order["gb"], days=order["days"])
         link = xui.build_vless_link(client["uuid"], email)
-    except XUIError:
+    except Exception as e:
         log.exception("XUI provisioning failed for order %s", order_id)
         await callback.message.edit_caption(
-            caption=(callback.message.caption or "") + "\n\n⚠️ خطا در ساخت اکانت روی پنل — دستی بررسی کن."
+            caption=(callback.message.caption or "")
+            + f"\n\n⚠️ خطا در ساخت اکانت روی پنل — دستی بررسی کن.\n{type(e).__name__}: {e}"
         )
-        await callback.answer("خطا در ساخت اکانت روی X-UI", show_alert=True)
+        await callback.answer(f"خطا: {e}"[:200], show_alert=True)
         return
 
     db.save_client(email, order["tg_id"], client["uuid"], order["gb"], client["expiry_time"])

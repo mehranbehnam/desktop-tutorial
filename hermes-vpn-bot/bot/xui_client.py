@@ -53,14 +53,17 @@ class XUIClient:
             self._authed = True
             return
 
-        # Touch the root page first so the panel hands out its initial cookie.
-        self.session.get(self.base_url + "/", timeout=15)
-        r = self.session.post(
-            f"{self.base_url}/login",
-            data={"username": self.username, "password": self.password},
-            timeout=15,
-        )
-        r.raise_for_status()
+        try:
+            # Touch the root page first so the panel hands out its initial cookie.
+            self.session.get(self.base_url + "/", timeout=15)
+            r = self.session.post(
+                f"{self.base_url}/login",
+                data={"username": self.username, "password": self.password},
+                timeout=15,
+            )
+            r.raise_for_status()
+        except requests.RequestException as e:
+            raise XUIError(f"Cannot reach panel at {self.base_url}: {e}") from e
         try:
             body = r.json()
         except ValueError:
@@ -79,14 +82,18 @@ class XUIClient:
 
         last_error = None
         for path in paths:
-            r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-            if r.status_code in (401, 403):
-                self._login()
+            try:
                 r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
-            if r.status_code == 404:
-                last_error = f"{path} -> 404"
+                if r.status_code in (401, 403):
+                    self._login()
+                    r = self.session.request(method, f"{self.base_url}{path}", timeout=20, **kwargs)
+                if r.status_code == 404:
+                    last_error = f"{path} -> 404"
+                    continue
+                r.raise_for_status()
+            except requests.RequestException as e:
+                last_error = f"{path} -> {e}"
                 continue
-            r.raise_for_status()
             try:
                 body = r.json()
             except ValueError:
@@ -198,24 +205,30 @@ class XUIClient:
         Good enough for manual copy/paste into v2rayNG / NekoBox / Streisand etc.
         """
         inbound = self.get_inbound()
-        stream = json.loads(inbound["streamSettings"])
-        reality = stream["realitySettings"]
-        port = inbound["port"]
+        try:
+            stream = json.loads(inbound["streamSettings"])
+            reality = stream["realitySettings"]
+            port = inbound["port"]
+        except (KeyError, ValueError, TypeError) as e:
+            raise XUIError(f"Inbound {inbound.get('id')} is not a Reality inbound: {e}") from e
 
         # The panel API is reached over localhost/LAN for security, but the
         # client link must point at the server's public IP/domain.
         host = config.XUI_PUBLIC_HOST or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0]
 
-        params = {
-            "type": stream.get("network", "tcp"),
-            "security": "reality",
-            "pbk": reality["settings"]["publicKey"],
-            "fp": reality["settings"].get("fingerprint", "chrome"),
-            "sni": reality["serverNames"][0],
-            "sid": reality["shortIds"][0],
-            "spx": reality["settings"].get("spiderX", "/"),
-            "flow": "xtls-rprx-vision",
-        }
+        try:
+            params = {
+                "type": stream.get("network", "tcp"),
+                "security": "reality",
+                "pbk": reality["settings"]["publicKey"],
+                "fp": reality["settings"].get("fingerprint", "chrome"),
+                "sni": reality["serverNames"][0],
+                "sid": reality["shortIds"][0],
+                "spx": reality["settings"].get("spiderX", "/"),
+                "flow": "xtls-rprx-vision",
+            }
+        except (KeyError, IndexError) as e:
+            raise XUIError(f"Reality settings incomplete on inbound: missing {e}") from e
         query = "&".join(f"{k}={v}" for k, v in params.items())
         tag = remark or email
         return f"vless://{client_uuid}@{host}:{port}?{query}#{tag}"

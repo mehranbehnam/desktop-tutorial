@@ -5,7 +5,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 import db
-from xui_client import XUIClient, XUIError
+from xui_client import XUIClient
 
 router = Router()
 log = logging.getLogger(__name__)
@@ -23,7 +23,8 @@ async def status(message: Message):
     for c in clients:
         try:
             traffic = xui.get_client_traffic(c["xui_email"])
-        except XUIError:
+        except Exception:
+            log.exception("traffic lookup failed for %s", c["xui_email"])
             traffic = None
 
         expiry = "بدون انقضا" if c["expiry_time"] == 0 else datetime.datetime.fromtimestamp(
@@ -54,7 +55,7 @@ async def resend_link(message: Message):
         try:
             link = xui.build_vless_link(c["uuid"], c["xui_email"])
             lines.append(f"`{link}`")
-        except XUIError:
+        except Exception:
             log.exception("failed to rebuild link for %s", c["xui_email"])
 
     if not lines:
