@@ -5,10 +5,19 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 import db
+from utils.delivery import send_service_pack
 from xui_client import XUIClient
 
 router = Router()
 log = logging.getLogger(__name__)
+
+
+def _size(num_bytes: int) -> str:
+    """Quotas range from a 200 MB trial to 100 GB plans, so pick the unit."""
+    gb = num_bytes / (1024**3)
+    if gb >= 1:
+        return f"{gb:.2f} گیگ"
+    return f"{num_bytes / (1024**2):.0f} مگ"
 
 
 @router.message(F.text == "📶 وضعیت سرویس من")
@@ -32,10 +41,10 @@ async def status(message: Message):
         ).strftime("%Y-%m-%d %H:%M")
 
         if traffic:
-            used_gb = (traffic.get("up", 0) + traffic.get("down", 0)) / (1024**3)
-            total = c["gb"]
-            total_str = "نامحدود" if total == 0 else f"{total} گیگ"
-            lines.append(f"• {c['xui_email']}: {used_gb:.2f} گیگ مصرف شده از {total_str} — انقضا: {expiry}")
+            used = traffic.get("up", 0) + traffic.get("down", 0)
+            total = traffic.get("total", 0)
+            total_str = "نامحدود" if not total else _size(total)
+            lines.append(f"• {c['xui_email']}: {_size(used)} مصرف شده از {total_str} — انقضا: {expiry}")
         else:
             lines.append(f"• {c['xui_email']}: اطلاعات مصرف در دسترس نیست — انقضا: {expiry}")
 
@@ -50,16 +59,17 @@ async def resend_link(message: Message):
         return
 
     xui = XUIClient()
-    lines = []
+    sent = 0
     for c in clients:
         try:
             link = xui.build_vless_link(c["uuid"], c["xui_email"])
-            lines.append(f"`{link}`")
+            sub_url = xui.get_sub_url(c["xui_email"])
         except Exception:
             log.exception("failed to rebuild link for %s", c["xui_email"])
+            continue
+        await send_service_pack(message, c["xui_email"], link, sub_url,
+                                header=f"♻️ سرویس شما ({c['xui_email']})")
+        sent += 1
 
-    if not lines:
+    if not sent:
         await message.answer("در حال حاضر امکان ساخت لینک وجود نداره، با پشتیبانی تماس بگیر.")
-        return
-
-    await message.answer("\n\n".join(lines), parse_mode="Markdown")

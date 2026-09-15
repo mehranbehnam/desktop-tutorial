@@ -30,8 +30,8 @@ XUI_SUB_BASE_URL = os.getenv("XUI_SUB_BASE_URL", "")
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
-TRIAL_GB = int(os.getenv("TRIAL_GB", "1"))
-TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "24"))
+TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
+TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [

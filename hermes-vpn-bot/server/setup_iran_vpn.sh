@@ -40,7 +40,7 @@ mkdir -p "$APP/bot/handlers" "$APP/bot/utils" "$APP/server"
 FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/xui_client.py bot/requirements.txt
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
-bot/utils/__init__.py bot/utils/pricing.py server/test_client.py"
+bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py server/test_client.py"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
   # rather than the downloaded size.
@@ -86,6 +86,8 @@ set_env XUI_PASSWORD "$XUI_PASSWORD"
 set_env XUI_API_TOKEN "$XUI_API_TOKEN"
 set_env XUI_PUBLIC_HOST "$XUI_PUBLIC_HOST"
 set_env XUI_INBOUND_ID "$XUI_INBOUND_ID"
+set_env TRIAL_MB "${TRIAL_MB:-200}"
+set_env TRIAL_HOURS "${TRIAL_HOURS:-1}"
 
 get_env() { grep -E "^$1=" "$ENV" 2>/dev/null | head -1 | cut -d= -f2-; }
 BASE=$(get_env XUI_BASE_URL); PUSER=$(get_env XUI_USERNAME); PPASS=$(get_env XUI_PASSWORD)

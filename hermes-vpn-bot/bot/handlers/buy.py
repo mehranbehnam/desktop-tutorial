@@ -7,6 +7,7 @@ import config
 import db
 from keyboards import MAIN_MENU, admin_review_keyboard, plans_keyboard
 from utils.pricing import unique_amount
+from utils.delivery import send_service_pack_to
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -110,6 +111,7 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
             email = f"user{order['tg_id']}-order{order_id}"
             client = xui.add_client(email=email, gb=order["gb"], days=order["days"])
         link = xui.build_vless_link(client["uuid"], email)
+        sub_url = xui.get_sub_url(email)
     except Exception as e:
         log.exception("XUI provisioning failed for order %s", order_id)
         await callback.message.edit_caption(
@@ -123,13 +125,9 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
     db.set_order_status(order_id, "approved", xui_email=email)
     _awaiting_receipt.pop(order["tg_id"], None)
 
-    await bot.send_message(
-        order["tg_id"],
-        "✅ پرداخت تایید شد و سرویس شما فعال شد!\n\n"
-        f"لینک اتصال:\n`{link}`\n\n"
-        "این لینک رو در اپلیکیشن v2rayNG / NekoBox / Streisand وارد کن.",
-        parse_mode="Markdown",
-        reply_markup=MAIN_MENU,
+    await send_service_pack_to(
+        bot, order["tg_id"], email, link, sub_url,
+        header="✅ پرداخت تایید شد و سرویس شما فعال شد!",
     )
     await callback.message.edit_caption(caption=(callback.message.caption or "") + "\n\n✅ تایید شد")
     await callback.answer("تایید شد و اکانت ساخته شد")

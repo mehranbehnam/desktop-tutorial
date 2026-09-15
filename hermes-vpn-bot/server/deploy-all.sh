@@ -149,8 +149,8 @@ XUI_SUB_BASE_URL = os.getenv("XUI_SUB_BASE_URL", "")
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
-TRIAL_GB = int(os.getenv("TRIAL_GB", "1"))
-TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "24"))
+TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
+TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [
@@ -358,6 +358,7 @@ import config
 import db
 from keyboards import MAIN_MENU, admin_review_keyboard, plans_keyboard
 from utils.pricing import unique_amount
+from utils.delivery import send_service_pack_to
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -461,6 +462,7 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
             email = f"user{order['tg_id']}-order{order_id}"
             client = xui.add_client(email=email, gb=order["gb"], days=order["days"])
         link = xui.build_vless_link(client["uuid"], email)
+        sub_url = xui.get_sub_url(email)
     except Exception as e:
         log.exception("XUI provisioning failed for order %s", order_id)
         await callback.message.edit_caption(
@@ -474,13 +476,9 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
     db.set_order_status(order_id, "approved", xui_email=email)
     _awaiting_receipt.pop(order["tg_id"], None)
 
-    await bot.send_message(
-        order["tg_id"],
-        "✅ پرداخت تایید شد و سرویس شما فعال شد!\n\n"
-        f"لینک اتصال:\n`{link}`\n\n"
-        "این لینک رو در اپلیکیشن v2rayNG / NekoBox / Streisand وارد کن.",
-        parse_mode="Markdown",
-        reply_markup=MAIN_MENU,
+    await send_service_pack_to(
+        bot, order["tg_id"], email, link, sub_url,
+        header="✅ پرداخت تایید شد و سرویس شما فعال شد!",
     )
     await callback.message.edit_caption(caption=(callback.message.caption or "") + "\n\n✅ تایید شد")
     await callback.answer("تایید شد و اکانت ساخته شد")
@@ -618,10 +616,19 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 import db
+from utils.delivery import send_service_pack
 from xui_client import XUIClient
 
 router = Router()
 log = logging.getLogger(__name__)
+
+
+def _size(num_bytes: int) -> str:
+    """Quotas range from a 200 MB trial to 100 GB plans, so pick the unit."""
+    gb = num_bytes / (1024**3)
+    if gb >= 1:
+        return f"{gb:.2f} گیگ"
+    return f"{num_bytes / (1024**2):.0f} مگ"
 
 
 @router.message(F.text == "📶 وضعیت سرویس من")
@@ -645,10 +652,10 @@ async def status(message: Message):
         ).strftime("%Y-%m-%d %H:%M")
 
         if traffic:
-            used_gb = (traffic.get("up", 0) + traffic.get("down", 0)) / (1024**3)
-            total = c["gb"]
-            total_str = "نامحدود" if total == 0 else f"{total} گیگ"
-            lines.append(f"• {c['xui_email']}: {used_gb:.2f} گیگ مصرف شده از {total_str} — انقضا: {expiry}")
+            used = traffic.get("up", 0) + traffic.get("down", 0)
+            total = traffic.get("total", 0)
+            total_str = "نامحدود" if not total else _size(total)
+            lines.append(f"• {c['xui_email']}: {_size(used)} مصرف شده از {total_str} — انقضا: {expiry}")
         else:
             lines.append(f"• {c['xui_email']}: اطلاعات مصرف در دسترس نیست — انقضا: {expiry}")
 
@@ -663,19 +670,20 @@ async def resend_link(message: Message):
         return
 
     xui = XUIClient()
-    lines = []
+    sent = 0
     for c in clients:
         try:
             link = xui.build_vless_link(c["uuid"], c["xui_email"])
-            lines.append(f"`{link}`")
+            sub_url = xui.get_sub_url(c["xui_email"])
         except Exception:
             log.exception("failed to rebuild link for %s", c["xui_email"])
+            continue
+        await send_service_pack(message, c["xui_email"], link, sub_url,
+                                header=f"♻️ سرویس شما ({c['xui_email']})")
+        sent += 1
 
-    if not lines:
+    if not sent:
         await message.answer("در حال حاضر امکان ساخت لینک وجود نداره، با پشتیبانی تماس بگیر.")
-        return
-
-    await message.answer("\n\n".join(lines), parse_mode="Markdown")
 PYEOF
 
 mkdir -p "$APP_DIR/bot/handlers"
@@ -688,6 +696,7 @@ from aiogram.types import Message
 
 import config
 import db
+from utils.delivery import send_service_pack
 from xui_client import XUIClient
 
 router = Router()
@@ -704,8 +713,9 @@ async def trial(message: Message, bot: Bot):
     email = f"trial{tg_id}-{int(time.time())}"
     try:
         xui = XUIClient()
-        client = xui.add_client(email=email, gb=config.TRIAL_GB, hours=config.TRIAL_HOURS)
+        client = xui.add_client(email=email, mb=config.TRIAL_MB, hours=config.TRIAL_HOURS)
         link = xui.build_vless_link(client["uuid"], email)
+        sub_url = xui.get_sub_url(email)
     except Exception as e:
         log.exception("trial provisioning failed for %s", tg_id)
         detail = f"\n\n`{type(e).__name__}: {e}`" if tg_id in config.ADMIN_IDS else ""
@@ -715,13 +725,12 @@ async def trial(message: Message, bot: Bot):
         )
         return
 
-    db.save_client(email, tg_id, client["uuid"], config.TRIAL_GB, client["expiry_time"])
+    db.save_client(email, tg_id, client["uuid"], 0, client["expiry_time"])
     db.mark_trial_used(tg_id)
 
-    await message.answer(
-        f"🧪 اکانت تست ساخته شد ({config.TRIAL_GB} گیگ / {config.TRIAL_HOURS} ساعت):\n\n"
-        f"`{link}`",
-        parse_mode="Markdown",
+    await send_service_pack(
+        message, email, link, sub_url,
+        header=f"🧪 اکانت تست ساخته شد ({config.TRIAL_MB} مگابایت / {config.TRIAL_HOURS} ساعت)",
     )
 PYEOF
 
@@ -829,6 +838,72 @@ def unique_amount(base_price: int) -> int:
     # all pending review simultaneously.
     return base_price + 1
 PYEOF
+cat > "$APP_DIR/bot/utils/delivery.py" << 'PYEOF'
+"""Deliver a service to a user as one package: link, subscription, QR."""
+import io
+
+import qrcode
+from aiogram.types import BufferedInputFile, Message
+
+import config
+
+
+def build_caption(email: str, link: str, sub_url: str = "", header: str = "") -> str:
+    parts = []
+    if header:
+        parts.append(header + "\n")
+    parts.append("🔗 *لینک اتصال:*\n`" + link + "`")
+    if sub_url:
+        parts.append(
+            "\n📡 *لینک اشتراک (ساب):*\n`" + sub_url + "`"
+            "\n_با این لینک، سرویس در برنامه خودکار به‌روز می‌شود._"
+        )
+    parts.append("\n📱 کد QR بالا را در v2rayNG / NekoBox / Streisand اسکن کن.")
+    return "\n".join(parts)
+
+
+def make_qr(payload: str) -> BufferedInputFile:
+    qr = qrcode.QRCode(box_size=8, border=2, error_correction=qrcode.constants.ERROR_CORRECT_M)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    buf = io.BytesIO()
+    qr.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
+    return BufferedInputFile(buf.getvalue(), filename="config.png")
+
+
+async def send_service_pack(message: Message, email: str, link: str, sub_url: str = "", header: str = ""):
+    """Send the QR image with both links in its caption, as one message.
+
+    The QR encodes the subscription URL when there is one, since that keeps
+    working after a renewal; otherwise it encodes the connection link.
+    """
+    caption = build_caption(email, link, sub_url, header)
+    try:
+        await message.answer_photo(
+            make_qr(sub_url or link), caption=caption, parse_mode="Markdown"
+        )
+    except Exception:
+        # Never lose the config because the image could not be sent.
+        await message.answer(caption, parse_mode="Markdown")
+
+
+async def send_service_pack_to(bot, chat_id: int, email: str, link: str, sub_url: str = "", header: str = ""):
+    """Same package, addressed to a chat id (used when an admin approves an order)."""
+    caption = build_caption(email, link, sub_url, header)
+    try:
+        await bot.send_photo(
+            chat_id, make_qr(sub_url or link), caption=caption,
+            parse_mode="Markdown", reply_markup=_main_menu(),
+        )
+    except Exception:
+        await bot.send_message(chat_id, caption, parse_mode="Markdown", reply_markup=_main_menu())
+
+
+def _main_menu():
+    from keyboards import MAIN_MENU
+
+    return MAIN_MENU
+PYEOF
 
 mkdir -p "$APP_DIR/bot"
 cat > "$APP_DIR/bot/xui_client.py" << 'PYEOF'
@@ -877,6 +952,7 @@ class XUIClient:
         if self.api_token:
             self.session.headers["Authorization"] = f"Bearer {self.api_token}"
         self._authed = bool(self.api_token)
+        self._panel_settings = None
 
     def _login(self):
         if self._authed:
@@ -921,20 +997,23 @@ class XUIClient:
             return int((time.time() + days * 86400) * 1000)
         return 0
 
-    def add_client(self, email: str, gb: int, days: int = 0, inbound_id: int = None, hours: int = 0) -> dict:
+    def add_client(self, email: str, gb: int = 0, days: int = 0, inbound_id: int = None,
+                   hours: int = 0, mb: int = 0) -> dict:
         """Create a client and attach it to the configured inbound.
 
-        Pass either `days` or `hours` (hours wins, e.g. for short trials);
-        0/0 means no expiry. The panel generates the UUID and subId itself.
+        Quota comes from `mb` when given (trials are sub-gigabyte), otherwise
+        `gb`; 0 for both means unlimited. Pass either `days` or `hours` (hours
+        wins); 0/0 means no expiry. The panel generates the UUID and subId.
 
         Returns dict with uuid, email, expiry_time (ms epoch), total_gb.
         """
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         expiry_ms = self._expiry_ms(days, hours)
+        total_bytes = mb * 1024 * 1024 if mb > 0 else (gb * 1024 * 1024 * 1024 if gb > 0 else 0)
         payload = {
             "client": {
                 "email": email,
-                "totalGB": 0 if gb <= 0 else gb * 1024 * 1024 * 1024,
+                "totalGB": total_bytes,
                 "expiryTime": expiry_ms,
                 "tgId": 0,
                 "limitIp": 0,
@@ -980,6 +1059,47 @@ class XUIClient:
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         return self._request("GET", f"/panel/api/inbounds/get/{inbound_id}")
 
+    def _settings(self) -> dict:
+        if self._panel_settings is None:
+            try:
+                self._panel_settings = self._request("POST", "/panel/api/setting/all") or {}
+            except XUIError:
+                self._panel_settings = {}
+        return self._panel_settings
+
+    def get_sub_url(self, email: str) -> str:
+        """Subscription URL for a client, or "" when the panel has none enabled.
+
+        The subscription server is configured independently of the panel (own
+        port, path and optional domain), so the address is read from the
+        panel's settings rather than derived from the API URL.
+        """
+        settings = self._settings()
+        if not settings:
+            return ""
+        enabled = settings.get("subEnable", settings.get("subenable"))
+        if enabled in (False, "false", 0, "0"):
+            return ""
+
+        traffic = self.get_client_traffic(email) or {}
+        sub_id = traffic.get("subId") or traffic.get("subid")
+        if not sub_id:
+            return ""
+
+        explicit = settings.get("subURI") or settings.get("subUri") or settings.get("suburi")
+        if explicit:
+            return explicit.rstrip("/") + "/" + sub_id
+
+        host = (settings.get("subDomain") or settings.get("subdomain")
+                or config.XUI_PUBLIC_HOST
+                or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0])
+        port = settings.get("subPort") or settings.get("subport")
+        path = settings.get("subPath") or settings.get("subpath") or "/sub/"
+        scheme = "https" if (settings.get("subKeyFile") or settings.get("subCertFile")) else "http"
+
+        netloc = f"{host}:{port}" if port and str(port) not in ("80", "443") else host
+        return f"{scheme}://{netloc}{path if path.startswith('/') else '/' + path}{sub_id}"
+
     def build_vless_link(self, client_uuid: str, email: str, remark: str = "") -> str:
         """Return the client's connection URL as the panel renders it.
 
@@ -1001,6 +1121,7 @@ cat > "$APP_DIR/bot/requirements.txt" << 'PYEOF'
 aiogram>=3.4,<4
 requests>=2.31
 python-dotenv>=1.0
+qrcode[pil]>=7.4
 PYEOF
 
 mkdir -p "$APP_DIR/server"

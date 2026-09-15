@@ -43,6 +43,7 @@ class XUIClient:
         if self.api_token:
             self.session.headers["Authorization"] = f"Bearer {self.api_token}"
         self._authed = bool(self.api_token)
+        self._panel_settings = None
 
     def _login(self):
         if self._authed:
@@ -87,20 +88,23 @@ class XUIClient:
             return int((time.time() + days * 86400) * 1000)
         return 0
 
-    def add_client(self, email: str, gb: int, days: int = 0, inbound_id: int = None, hours: int = 0) -> dict:
+    def add_client(self, email: str, gb: int = 0, days: int = 0, inbound_id: int = None,
+                   hours: int = 0, mb: int = 0) -> dict:
         """Create a client and attach it to the configured inbound.
 
-        Pass either `days` or `hours` (hours wins, e.g. for short trials);
-        0/0 means no expiry. The panel generates the UUID and subId itself.
+        Quota comes from `mb` when given (trials are sub-gigabyte), otherwise
+        `gb`; 0 for both means unlimited. Pass either `days` or `hours` (hours
+        wins); 0/0 means no expiry. The panel generates the UUID and subId.
 
         Returns dict with uuid, email, expiry_time (ms epoch), total_gb.
         """
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         expiry_ms = self._expiry_ms(days, hours)
+        total_bytes = mb * 1024 * 1024 if mb > 0 else (gb * 1024 * 1024 * 1024 if gb > 0 else 0)
         payload = {
             "client": {
                 "email": email,
-                "totalGB": 0 if gb <= 0 else gb * 1024 * 1024 * 1024,
+                "totalGB": total_bytes,
                 "expiryTime": expiry_ms,
                 "tgId": 0,
                 "limitIp": 0,
@@ -145,6 +149,47 @@ class XUIClient:
     def get_inbound(self, inbound_id: int = None) -> dict:
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         return self._request("GET", f"/panel/api/inbounds/get/{inbound_id}")
+
+    def _settings(self) -> dict:
+        if self._panel_settings is None:
+            try:
+                self._panel_settings = self._request("POST", "/panel/api/setting/all") or {}
+            except XUIError:
+                self._panel_settings = {}
+        return self._panel_settings
+
+    def get_sub_url(self, email: str) -> str:
+        """Subscription URL for a client, or "" when the panel has none enabled.
+
+        The subscription server is configured independently of the panel (own
+        port, path and optional domain), so the address is read from the
+        panel's settings rather than derived from the API URL.
+        """
+        settings = self._settings()
+        if not settings:
+            return ""
+        enabled = settings.get("subEnable", settings.get("subenable"))
+        if enabled in (False, "false", 0, "0"):
+            return ""
+
+        traffic = self.get_client_traffic(email) or {}
+        sub_id = traffic.get("subId") or traffic.get("subid")
+        if not sub_id:
+            return ""
+
+        explicit = settings.get("subURI") or settings.get("subUri") or settings.get("suburi")
+        if explicit:
+            return explicit.rstrip("/") + "/" + sub_id
+
+        host = (settings.get("subDomain") or settings.get("subdomain")
+                or config.XUI_PUBLIC_HOST
+                or self.base_url.split("//", 1)[-1].split(":")[0].split("/")[0])
+        port = settings.get("subPort") or settings.get("subport")
+        path = settings.get("subPath") or settings.get("subpath") or "/sub/"
+        scheme = "https" if (settings.get("subKeyFile") or settings.get("subCertFile")) else "http"
+
+        netloc = f"{host}:{port}" if port and str(port) not in ("80", "443") else host
+        return f"{scheme}://{netloc}{path if path.startswith('/') else '/' + path}{sub_id}"
 
     def build_vless_link(self, client_uuid: str, email: str, remark: str = "") -> str:
         """Return the client's connection URL as the panel renders it.
