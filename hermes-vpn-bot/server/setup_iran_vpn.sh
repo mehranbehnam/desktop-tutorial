@@ -142,15 +142,21 @@ fi
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "$BASE/")
 [ "$CODE" = "200" ] && ok "GET $BASE/ -> 200" || bad "GET $BASE/ -> $CODE (wrong web base path?)"
 
+PTOKEN=$(get_env XUI_API_TOKEN)
 rm -f /tmp/ivpn_cookies.txt
 LOGIN=$(curl -s --max-time 15 -A "$UA" -c /tmp/ivpn_cookies.txt -X POST "$BASE/login" \
         -d "username=$PUSER&password=$PPASS" | head -c 150)
 case "$LOGIN" in
   *'"success":true'*|*'"success": true'*) ok "panel login succeeded" ;;
-  *) bad "panel login failed -> $LOGIN" ;;
+  *) if [ -n "$PTOKEN" ]; then
+       warn "cookie login refused (this build is token-only) — using the API token"
+     else
+       bad "panel login failed and no API token to fall back on -> $LOGIN"
+     fi ;;
 esac
 
 LIST=$(curl -s -o /tmp/ivpn_list.json -w '%{http_code}' --max-time 15 -A "$UA" \
+       -H "Authorization: Bearer $PTOKEN" \
        -b /tmp/ivpn_cookies.txt "$BASE/panel/api/inbounds/list")
 if [ "$LIST" = "200" ]; then
   ok "inbound list readable"
@@ -179,6 +185,7 @@ LINK=$(echo "$PROVISION" | grep -o 'vless://[^ ]*' | head -1)
 
 # ---------------------------------------------------------------- 7. service
 say "7. BOT SERVICE"
+systemctl daemon-reload 2>&1
 systemctl restart "$SVC" 2>&1
 sleep 4
 STATE=$(systemctl is-active "$SVC" 2>&1)
