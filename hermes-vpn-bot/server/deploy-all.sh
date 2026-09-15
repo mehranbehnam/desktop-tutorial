@@ -880,31 +880,39 @@ class XUIClient:
         self._authed = False
 
     def _login(self):
-        """Establish a cookie session. Mutating routes need it even with a token."""
+        """Establish a cookie session, if this build offers one.
+
+        A token alone is enough on builds that expose the whole API under it,
+        so a refused login is only fatal when there is no token to fall back on.
+        """
         if not (self.username and self.password):
             if not self.api_token:
                 raise XUIError("No XUI credentials: set XUI_USERNAME/XUI_PASSWORD or XUI_API_TOKEN")
             self._authed = True
             return
 
-        try:
-            # Touch the root page first so the panel hands out its initial cookie.
-            self.session.get(self.base_url + "/", timeout=15)
-            r = self.session.post(
-                f"{self.base_url}/login",
-                data={"username": self.username, "password": self.password},
-                timeout=15,
-            )
-            r.raise_for_status()
-        except requests.RequestException as e:
-            raise XUIError(f"Cannot reach panel at {self.base_url}: {e}") from e
-        try:
-            body = r.json()
-        except ValueError:
-            raise XUIError(f"XUI login returned non-JSON (HTTP {r.status_code})")
-        if not body.get("success"):
-            raise XUIError(f"XUI login failed: {body}")
-        self._authed = True
+        creds = {"username": self.username, "password": self.password}
+        error = None
+        for as_json in (False, True):
+            try:
+                # Touch the root page first so the panel hands out its initial cookie.
+                self.session.get(self.base_url + "/", timeout=15)
+                kwargs = {"json": creds} if as_json else {"data": creds}
+                r = self.session.post(f"{self.base_url}/login", timeout=15, **kwargs)
+                r.raise_for_status()
+                body = r.json()
+            except (requests.RequestException, ValueError) as e:
+                error = f"{'json' if as_json else 'form'} login: {e}"
+                continue
+            if body.get("success"):
+                self._authed = True
+                return
+            error = f"{'json' if as_json else 'form'} login rejected: {body}"
+
+        if self.api_token:
+            self._authed = True  # token auth carries the session instead
+            return
+        raise XUIError(f"XUI login failed ({error})")
 
     def _try_paths(self, method: str, paths: list[str], **kwargs):
         """Call the first candidate path the panel actually implements.
