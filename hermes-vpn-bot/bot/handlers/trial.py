@@ -16,7 +16,10 @@ log = logging.getLogger(__name__)
 @router.message(F.text == "🧪 تست")
 async def trial(message: Message, bot: Bot):
     tg_id = message.from_user.id
-    if db.has_used_trial(tg_id):
+    # Admins run this to check the service itself, so the one-per-user limit
+    # would stop them testing after the first try.
+    is_admin = tg_id in config.ADMIN_IDS
+    if not is_admin and db.has_used_trial(tg_id):
         await message.answer("شما قبلاً از سرویس تست استفاده کردی. برای ادامه یکی از پلن‌ها رو بخر.")
         return
 
@@ -36,7 +39,8 @@ async def trial(message: Message, bot: Bot):
         return
 
     db.save_client(email, tg_id, client["uuid"], 0, client["expiry_time"])
-    db.mark_trial_used(tg_id)
+    if not is_admin:
+        db.mark_trial_used(tg_id)
 
     await send_service_pack(
         message, email, link, sub_url,
