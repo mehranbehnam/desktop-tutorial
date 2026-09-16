@@ -37,10 +37,10 @@ ok "service: $SVC"
 # ---------------------------------------------------------------- 2. code
 say "2. REFRESH CODE FROM GITHUB"
 mkdir -p "$APP/bot/handlers" "$APP/bot/utils" "$APP/server"
-FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/xui_client.py bot/requirements.txt
+FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/devbot_main.py bot/xui_client.py bot/requirements.txt
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
-bot/handlers/ops.py
+bot/handlers/ops.py bot/handlers/devmenu.py
 bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py server/test_client.py"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
@@ -89,10 +89,12 @@ set_env XUI_PUBLIC_HOST "$XUI_PUBLIC_HOST"
 set_env XUI_INBOUND_ID "$XUI_INBOUND_ID"
 set_env TRIAL_MB "${TRIAL_MB:-200}"
 set_env TRIAL_HOURS "${TRIAL_HOURS:-1}"
+set_env DEV_BOT_TOKEN "$DEV_BOT_TOKEN"
 
 get_env() { grep -E "^$1=" "$ENV" 2>/dev/null | head -1 | cut -d= -f2-; }
 BASE=$(get_env XUI_BASE_URL); PUSER=$(get_env XUI_USERNAME); PPASS=$(get_env XUI_PASSWORD)
 PHOST=$(get_env XUI_PUBLIC_HOST); INB=$(get_env XUI_INBOUND_ID); TOKEN=$(get_env BOT_TOKEN)
+DEVTOKEN=$(get_env DEV_BOT_TOKEN)
 
 echo "  panel      : $BASE"
 echo "  public host: $PHOST"
@@ -102,6 +104,7 @@ echo "  db path    : $(get_env DB_PATH)"
 [ -n "$PUSER" ] && ok "panel user set"     || warn "XUI_USERNAME empty (cookie login will fail)"
 [ -n "$PHOST" ] && ok "XUI_PUBLIC_HOST set" || warn "XUI_PUBLIC_HOST empty — links would point at the panel host"
 [ -n "$TOKEN" ] && ok "BOT_TOKEN set"      || bad "BOT_TOKEN empty"
+[ -n "$DEVTOKEN" ] && ok "DEV_BOT_TOKEN set (maintenance bot will run)" || warn "DEV_BOT_TOKEN empty — maintenance bot skipped"
 
 # ---------------------------------------------------------------- 4. venv
 say "4. PYTHON ENVIRONMENT"
@@ -124,7 +127,7 @@ IMPORTS=$("$PY" -c "
 import sys; sys.path.insert(0,'bot')
 try:
     import config, db, xui_client
-    from handlers import trial, buy, status, start, renew, admin, ops
+    from handlers import trial, buy, status, start, renew, admin, ops, devmenu
     print('OK')
 except Exception:
     import traceback; traceback.print_exc()
@@ -200,6 +203,38 @@ if [ -n "$TOKEN" ]; then
   case "$ME" in
     *'"ok":true'*) ok "telegram token valid: @$(echo "$ME" | grep -o '"username":"[^"]*' | cut -d'"' -f4)" ;;
     *) bad "telegram getMe failed -> $(echo "$ME" | head -c 120)" ;;
+  esac
+fi
+
+# ---------------------------------------------------------------- 7b. dev bot
+if [ -n "$DEVTOKEN" ]; then
+  say "7b. MAINTENANCE BOT SERVICE (developer bot)"
+  DEVSVC="${SVC}-dev"
+  cat > "/etc/systemd/system/${DEVSVC}.service" << SERVICEEOF
+[Unit]
+Description=iranvpn maintenance/developer Telegram bot
+After=network.target ${SVC}.service
+
+[Service]
+WorkingDirectory=${APP}/bot
+ExecStart=${APP}/venv/bin/python ${APP}/bot/devbot_main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+  systemctl daemon-reload 2>&1
+  systemctl enable --now "$DEVSVC" 2>&1
+  sleep 3
+  DEVSTATE=$(systemctl is-active "$DEVSVC" 2>&1)
+  [ "$DEVSTATE" = "active" ] && ok "service $DEVSVC active" || bad "service $DEVSVC $DEVSTATE"
+  journalctl -u "$DEVSVC" -n 8 --no-pager 2>&1 | sed 's/^/     /' | tail -8
+
+  DEVME=$(curl -s --max-time 15 "https://api.telegram.org/bot$DEVTOKEN/getMe" | tr -d ' ')
+  case "$DEVME" in
+    *'"ok":true'*) ok "dev bot token valid: @$(echo "$DEVME" | grep -o '"username":"[^"]*' | cut -d'"' -f4) — send it /start" ;;
+    *) bad "dev bot getMe failed -> $(echo "$DEVME" | head -c 120)" ;;
   esac
 fi
 

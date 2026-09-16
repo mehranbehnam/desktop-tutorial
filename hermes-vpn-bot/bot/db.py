@@ -136,3 +136,41 @@ def report_last_24h():
             (since,),
         ).fetchone()
         return row["cnt"], row["total"]
+
+
+def all_user_ids() -> list[int]:
+    """Every user who ever /started the bot — the broadcast audience."""
+    with get_conn() as conn:
+        return [r["tg_id"] for r in conn.execute("SELECT tg_id FROM users").fetchall()]
+
+
+def recent_orders(limit: int = 10):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+
+def stats() -> dict:
+    """Aggregate counters for a one-glance business overview."""
+    with get_conn() as conn:
+        users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        trial_used = conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE trial_used=1"
+        ).fetchone()["n"]
+        clients = conn.execute("SELECT COUNT(*) AS n FROM clients").fetchone()["n"]
+        approved = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total "
+            "FROM orders WHERE status='approved'"
+        ).fetchone()
+        pending = conn.execute(
+            "SELECT COUNT(*) AS n FROM orders WHERE status='awaiting_review'"
+        ).fetchone()["n"]
+        return {
+            "users": users,
+            "trial_used": trial_used,
+            "clients": clients,
+            "orders_approved": approved["n"],
+            "revenue_total": approved["total"],
+            "orders_pending": pending,
+        }

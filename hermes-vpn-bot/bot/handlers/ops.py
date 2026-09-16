@@ -312,10 +312,11 @@ async def fixkeys(message: Message):
 RAW = ("https://raw.githubusercontent.com/mehranbehnam/desktop-tutorial/"
        "refs/heads/claude/iran-vpn-turkey-d2hbvg/hermes-vpn-bot")
 FILES = [
-    "bot/config.py", "bot/db.py", "bot/keyboards.py", "bot/main.py", "bot/xui_client.py",
+    "bot/config.py", "bot/db.py", "bot/keyboards.py", "bot/main.py", "bot/devbot_main.py",
+    "bot/xui_client.py",
     "bot/handlers/__init__.py", "bot/handlers/admin.py", "bot/handlers/buy.py",
     "bot/handlers/renew.py", "bot/handlers/start.py", "bot/handlers/status.py",
-    "bot/handlers/trial.py", "bot/handlers/ops.py",
+    "bot/handlers/trial.py", "bot/handlers/ops.py", "bot/handlers/devmenu.py",
     "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
     "bot/utils/x25519.py", "bot/utils/tunnel_test.py",
 ]

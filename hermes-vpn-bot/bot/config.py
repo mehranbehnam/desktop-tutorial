@@ -6,6 +6,9 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+# Separate bot for maintenance/admin use, menu-driven, admin-only. Empty
+# means it is not deployed here; devbot_main.py refuses to start without it.
+DEV_BOT_TOKEN = os.getenv("DEV_BOT_TOKEN", "")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@your_support")
 BOT_NAME = os.getenv("BOT_NAME", "VPN Store")
 
