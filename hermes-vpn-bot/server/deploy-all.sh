@@ -760,6 +760,22 @@ from xui_client import XUIClient, XUIError
 router = Router()
 log = logging.getLogger(__name__)
 
+
+@router.error()
+async def report_crashes(event):
+    """Catch anything a handler above missed, so an admin command never fails
+    in total silence — which is exactly what happened when /testtunnel's
+    import raised before its first reply (see: forgetting a file in FILES)."""
+    log.exception("unhandled error in ops handler", exc_info=event.exception)
+    update = event.update
+    msg = update.message or (update.callback_query.message if update.callback_query else None)
+    if msg and msg.chat.id in config.ADMIN_IDS:
+        try:
+            await msg.answer(f"❌ خطای پیش‌بینی‌نشده: {type(event.exception).__name__}: {event.exception}")
+        except Exception:
+            pass
+    return True
+
 HELP = (
     "🛠 دستورهای مدیریت:\n\n"
     "/diag — بررسی کامل سرور و پنل\n"
@@ -999,7 +1015,7 @@ FILES = [
     "bot/handlers/renew.py", "bot/handlers/start.py", "bot/handlers/status.py",
     "bot/handlers/trial.py", "bot/handlers/ops.py",
     "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
-    "bot/utils/x25519.py",
+    "bot/utils/x25519.py", "bot/utils/tunnel_test.py",
 ]
 
 
@@ -1068,7 +1084,12 @@ async def testtunnel(message: Message):
     """
     if not _admin(message):
         return
-    from utils.tunnel_test import run_probe
+    try:
+        from utils.tunnel_test import run_probe
+    except ImportError as e:
+        await message.answer(
+            f"❌ ماژول تست هنوز روی سرور نیست ({e}).\nیک بار دیگر /update بزن.")
+        return
 
     await message.answer("⏳ در حال دانلود/اجرای Xray و تست اتصال واقعی به اینباند خودمان…")
     x = XUIClient()
