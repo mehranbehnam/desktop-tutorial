@@ -1210,7 +1210,10 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(ops.router)
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    # False, not True: /update and /restartxray restart this process often,
+    # and a command sent in that few-second window must still be picked up
+    # once polling resumes, not silently discarded.
+    await bot.delete_webhook(drop_pending_updates=False)
     await dp.start_polling(bot)
 
 
