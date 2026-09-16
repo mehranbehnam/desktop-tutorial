@@ -138,6 +138,29 @@ def report_last_24h():
         return row["cnt"], row["total"]
 
 
+def report_since(seconds: int | None):
+    """Approved-order count/total since `seconds` ago, or all-time if None."""
+    with get_conn() as conn:
+        if seconds is None:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total "
+                "FROM orders WHERE status='approved'"
+            ).fetchone()
+        else:
+            since = int(time.time()) - seconds
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total "
+                "FROM orders WHERE status='approved' AND created_at >= ?",
+                (since,),
+            ).fetchone()
+        return row["cnt"], row["total"]
+
+
+def all_clients():
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM clients").fetchall()
+
+
 def all_user_ids() -> list[int]:
     """Every user who ever /started the bot — the broadcast audience."""
     with get_conn() as conn:

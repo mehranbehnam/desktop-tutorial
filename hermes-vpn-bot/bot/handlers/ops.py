@@ -318,7 +318,8 @@ FILES = [
     "bot/handlers/renew.py", "bot/handlers/start.py", "bot/handlers/status.py",
     "bot/handlers/trial.py", "bot/handlers/ops.py", "bot/handlers/devmenu.py",
     "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
-    "bot/utils/x25519.py", "bot/utils/tunnel_test.py",
+    "bot/utils/x25519.py", "bot/utils/tunnel_test.py", "bot/utils/iran_ssh.py",
+    "bot/requirements.txt",
 ]
 
 
@@ -371,10 +372,24 @@ async def update(message: Message):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copyfile(path, dest)
 
+    # A new dependency (like paramiko) is useless if it's never installed —
+    # this used to only happen via a full setup_iran_vpn.sh re-run.
+    pip = os.path.join(install_dir, "venv", "bin", "pip")
+    if "bot/requirements.txt" in staged and os.path.isfile(pip):
+        subprocess.run([pip, "install", "-q", "-r", os.path.join(install_dir, "bot", "requirements.txt")],
+                       capture_output=True, timeout=120)
+
+    # Restart both services: this code is shared by the sales bot and the
+    # developer bot, and whichever one is running it needs the new files
+    # loaded too. The developer service may not exist yet on a first-ever
+    # /update (before setup_iran_vpn.sh has created it) — that failure is
+    # harmless and silent.
     service = os.path.basename(install_dir)
-    await message.answer(f"✅ {len(staged)} فایل به‌روز شد.\n♻️ در حال ری‌استارت {service}…\n\n"
+    await message.answer(f"✅ {len(staged)} فایل به‌روز شد.\n♻️ در حال ری‌استارت سرویس‌ها…\n\n"
                          "چند ثانیه صبر کن بعد /diag بزن.")
     subprocess.Popen(["systemctl", "restart", service])
+    subprocess.Popen(["systemctl", "restart", f"{service}-dev"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 @router.message(Command("testtunnel"))

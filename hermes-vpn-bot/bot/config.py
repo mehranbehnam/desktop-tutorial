@@ -33,6 +33,16 @@ XUI_SUB_BASE_URL = os.getenv("XUI_SUB_BASE_URL", "")
 
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 
+# SSH into the Iran panel server itself (OS level, not the panel's web
+# login) — only used by the developer bot, for things the panel's HTTP API
+# has no endpoint for (fail2ban ban list/unban, restarting the panel
+# service itself). Set via the developer bot's own "تنظیم SSH سرور ایران"
+# flow, never hand-typed into this repo.
+IRAN_SSH_HOST = os.getenv("IRAN_SSH_HOST", "")
+IRAN_SSH_PORT = int(os.getenv("IRAN_SSH_PORT", "22"))
+IRAN_SSH_USER = os.getenv("IRAN_SSH_USER", "")
+IRAN_SSH_PASSWORD = os.getenv("IRAN_SSH_PASSWORD", "")
+
 TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
 TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
