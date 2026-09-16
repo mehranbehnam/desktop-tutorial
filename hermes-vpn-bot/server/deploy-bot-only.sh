@@ -682,6 +682,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 import config
+from utils.x25519 import public_from_private
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -692,6 +693,7 @@ HELP = (
     "/diag — بررسی کامل سرور و پنل\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
+    "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
     "/ops — همین راهنما"
 )
@@ -743,6 +745,26 @@ async def diag(message: Message):
                      f" — {inbound.get('protocol')}/{stream.get('security')}")
         lines.append(f"   دامنه: {(reality.get('serverNames') or ['?'])[0]}")
         lines.append(f"   کلاینت‌ها: {len(clients)}")
+
+        # The link carries a public key the panel stores separately from the
+        # private key Xray authenticates with; if they ever fell out of step
+        # every client fails and is handed to the fallback site.
+        priv = reality.get("privateKey") or ""
+        shown = (reality.get("settings") or {}).get("publicKey") or ""
+        if priv:
+            try:
+                derived = public_from_private(priv)
+                if derived == shown.strip().rstrip("="):
+                    lines.append("✅ کلید عمومی با کلید خصوصی جفت است")
+                else:
+                    lines.append("❌ کلید عمومی با کلید خصوصی جفت نیست!")
+                    lines.append(f"   در لینک: {shown[:20]}…")
+                    lines.append(f"   درست  : {derived[:20]}…")
+                    lines.append("   با /fixkeys درستش کن")
+            except ValueError as e:
+                lines.append(f"⚠️ بررسی کلید ممکن نشد: {e}")
+        else:
+            lines.append("⚠️ پنل کلید خصوصی را برنمی‌گرداند (قابل بررسی نیست)")
 
         want = x.client_flow()
         missing = [c.get("email") for c in clients if (c.get("flow") or "") != want]
@@ -844,6 +866,54 @@ async def restart_xray(message: Message):
         XUIClient()._request("POST", "/panel/api/server/restartXrayService")
         await message.answer("✅ Xray ری‌استارت شد.")
     except XUIError as e:
+        await message.answer(f"❌ ناموفق: {e}")
+
+
+@router.message(Command("fixkeys"))
+async def fixkeys(message: Message):
+    """Write back the public key that actually matches the private key."""
+    if not _admin(message):
+        return
+    x = XUIClient()
+    try:
+        inbound = x.get_inbound()
+        stream = inbound.get("streamSettings")
+        stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+        reality = stream.get("realitySettings") or {}
+        priv = reality.get("privateKey") or ""
+        if not priv:
+            await message.answer("پنل کلید خصوصی را برنمی‌گرداند؛ از خود پنل کلیدها را بازتولید کن.")
+            return
+        derived = public_from_private(priv)
+        settings_block = reality.get("settings") or {}
+        if settings_block.get("publicKey", "").strip().rstrip("=") == derived:
+            await message.answer("کلیدها از قبل جفت‌اند؛ کاری لازم نیست.")
+            return
+
+        settings_block["publicKey"] = derived
+        reality["settings"] = settings_block
+        stream["realitySettings"] = reality
+        body = {
+            "enable": inbound.get("enable", True),
+            "remark": inbound.get("remark", ""),
+            "listen": inbound.get("listen", ""),
+            "port": inbound.get("port"),
+            "protocol": inbound.get("protocol"),
+            "expiryTime": inbound.get("expiryTime", 0),
+            "total": inbound.get("total", 0),
+            "settings": json.loads(inbound["settings"]) if isinstance(inbound.get("settings"), str)
+            else inbound.get("settings", {}),
+            "streamSettings": stream,
+            "sniffing": json.loads(inbound["sniffing"]) if isinstance(inbound.get("sniffing"), str)
+            else inbound.get("sniffing", {}),
+        }
+        x._request("POST", f"/panel/api/inbounds/update/{inbound['id']}", json=body)
+        x._request("POST", "/panel/api/server/restartXrayService")
+        await message.answer(
+            f"✅ کلید عمومی اصلاح شد:\n`{derived}`\n\n"
+            "Xray ری‌استارت شد. حالا یک لینک تازه بگیر (🧪 تست).",
+            parse_mode="Markdown")
+    except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
 PYEOF
 
@@ -1017,6 +1087,73 @@ def _main_menu():
     from keyboards import MAIN_MENU
 
     return MAIN_MENU
+PYEOF
+cat > "$APP_DIR/bot/utils/x25519.py" << 'PYEOF'
+"""X25519 public key derivation, to check a Reality keypair actually pairs.
+
+Reality authenticates clients against the inbound's private key while the
+link carries a public key the panel stores separately. If those two were ever
+regenerated out of step, every client fails authentication and is handed to
+the fallback site — a connection that looks healthy and carries nothing.
+
+Verified against the RFC 7748 section 6.1 vectors.
+"""
+import base64
+
+_P = 2**255 - 19
+_A24 = 121665
+
+
+def _clamp(private: bytes) -> int:
+    k = bytearray(private)
+    k[0] &= 248
+    k[31] &= 127
+    k[31] |= 64
+    return int.from_bytes(k, "little")
+
+
+def scalarmult(private: bytes, u_int: int = 9) -> bytes:
+    """Montgomery ladder; u defaults to the curve's base point."""
+    k = _clamp(private)
+    x1, x2, z2, x3, z3, swap = u_int, 1, 0, u_int, 1, 0
+    for t in range(254, -1, -1):
+        kt = (k >> t) & 1
+        swap ^= kt
+        if swap:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        swap = kt
+        a = (x2 + z2) % _P
+        aa = a * a % _P
+        b = (x2 - z2) % _P
+        bb = b * b % _P
+        e = (aa - bb) % _P
+        c = (x3 + z3) % _P
+        d = (x3 - z3) % _P
+        da = d * a % _P
+        cb = c * b % _P
+        x3 = (da + cb) ** 2 % _P
+        z3 = x1 * ((da - cb) ** 2) % _P
+        x2 = aa * bb % _P
+        z2 = e * ((aa + _A24 * e) % _P) % _P
+    if swap:
+        x2, x3 = x3, x2
+        z2, z3 = z3, z2
+    return ((x2 * pow(z2, _P - 2, _P)) % _P).to_bytes(32, "little")
+
+
+def _b64decode(value: str) -> bytes:
+    """Xray writes keys base64url without padding."""
+    value = value.strip().replace("-", "+").replace("_", "/")
+    return base64.b64decode(value + "=" * (-len(value) % 4))
+
+
+def public_from_private(private_b64: str) -> str:
+    """Return the base64url public key matching an Xray Reality private key."""
+    raw = _b64decode(private_b64)
+    if len(raw) != 32:
+        raise ValueError(f"private key is {len(raw)} bytes, expected 32")
+    return base64.urlsafe_b64encode(scalarmult(raw)).decode().rstrip("=")
 PYEOF
 
 mkdir -p "$APP_DIR/bot"

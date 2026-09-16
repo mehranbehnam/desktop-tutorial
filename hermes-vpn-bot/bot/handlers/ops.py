@@ -13,6 +13,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 import config
+from utils.x25519 import public_from_private
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -23,6 +24,7 @@ HELP = (
     "/diag — بررسی کامل سرور و پنل\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
+    "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
     "/ops — همین راهنما"
 )
@@ -74,6 +76,26 @@ async def diag(message: Message):
                      f" — {inbound.get('protocol')}/{stream.get('security')}")
         lines.append(f"   دامنه: {(reality.get('serverNames') or ['?'])[0]}")
         lines.append(f"   کلاینت‌ها: {len(clients)}")
+
+        # The link carries a public key the panel stores separately from the
+        # private key Xray authenticates with; if they ever fell out of step
+        # every client fails and is handed to the fallback site.
+        priv = reality.get("privateKey") or ""
+        shown = (reality.get("settings") or {}).get("publicKey") or ""
+        if priv:
+            try:
+                derived = public_from_private(priv)
+                if derived == shown.strip().rstrip("="):
+                    lines.append("✅ کلید عمومی با کلید خصوصی جفت است")
+                else:
+                    lines.append("❌ کلید عمومی با کلید خصوصی جفت نیست!")
+                    lines.append(f"   در لینک: {shown[:20]}…")
+                    lines.append(f"   درست  : {derived[:20]}…")
+                    lines.append("   با /fixkeys درستش کن")
+            except ValueError as e:
+                lines.append(f"⚠️ بررسی کلید ممکن نشد: {e}")
+        else:
+            lines.append("⚠️ پنل کلید خصوصی را برنمی‌گرداند (قابل بررسی نیست)")
 
         want = x.client_flow()
         missing = [c.get("email") for c in clients if (c.get("flow") or "") != want]
@@ -175,4 +197,52 @@ async def restart_xray(message: Message):
         XUIClient()._request("POST", "/panel/api/server/restartXrayService")
         await message.answer("✅ Xray ری‌استارت شد.")
     except XUIError as e:
+        await message.answer(f"❌ ناموفق: {e}")
+
+
+@router.message(Command("fixkeys"))
+async def fixkeys(message: Message):
+    """Write back the public key that actually matches the private key."""
+    if not _admin(message):
+        return
+    x = XUIClient()
+    try:
+        inbound = x.get_inbound()
+        stream = inbound.get("streamSettings")
+        stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+        reality = stream.get("realitySettings") or {}
+        priv = reality.get("privateKey") or ""
+        if not priv:
+            await message.answer("پنل کلید خصوصی را برنمی‌گرداند؛ از خود پنل کلیدها را بازتولید کن.")
+            return
+        derived = public_from_private(priv)
+        settings_block = reality.get("settings") or {}
+        if settings_block.get("publicKey", "").strip().rstrip("=") == derived:
+            await message.answer("کلیدها از قبل جفت‌اند؛ کاری لازم نیست.")
+            return
+
+        settings_block["publicKey"] = derived
+        reality["settings"] = settings_block
+        stream["realitySettings"] = reality
+        body = {
+            "enable": inbound.get("enable", True),
+            "remark": inbound.get("remark", ""),
+            "listen": inbound.get("listen", ""),
+            "port": inbound.get("port"),
+            "protocol": inbound.get("protocol"),
+            "expiryTime": inbound.get("expiryTime", 0),
+            "total": inbound.get("total", 0),
+            "settings": json.loads(inbound["settings"]) if isinstance(inbound.get("settings"), str)
+            else inbound.get("settings", {}),
+            "streamSettings": stream,
+            "sniffing": json.loads(inbound["sniffing"]) if isinstance(inbound.get("sniffing"), str)
+            else inbound.get("sniffing", {}),
+        }
+        x._request("POST", f"/panel/api/inbounds/update/{inbound['id']}", json=body)
+        x._request("POST", "/panel/api/server/restartXrayService")
+        await message.answer(
+            f"✅ کلید عمومی اصلاح شد:\n`{derived}`\n\n"
+            "Xray ری‌استارت شد. حالا یک لینک تازه بگیر (🧪 تست).",
+            parse_mode="Markdown")
+    except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
