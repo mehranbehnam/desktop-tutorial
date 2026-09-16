@@ -1,32 +1,50 @@
 """The all-purpose maintenance menu for @iranvpndeveloper_bot.
 
-Every /command in ops.py is wrapped as a button here, plus capabilities that
-previously needed an SSH session or a manual panel click: changing the
-Reality dest/SNI, toggling the inbound, server resource stats, a database
-backup, broadcasting to users, and per-client extend/disable/delete. The
-goal is that nothing about running the service is blocked on a human being
-available to type a command by hand.
+Every /command in ops.py is wrapped as a button here, the sales bot's own
+customer-facing flows (buy/trial/renew/status) are reused wholesale so the
+business can run entirely from this one bot if needed, and there's a set of
+capabilities that previously needed an SSH session or a manual panel click:
+changing the Reality dest/SNI, toggling the inbound, repointing the bot at
+a different X-UI panel, server resource stats, a database backup,
+broadcasting to users, per-client create/extend/disable/delete (single and
+bulk), financial reports, and fail2ban ban-list/unban + restarting the
+panel itself on the Iran server over SSH.
+
+The SSH-dependent commands only work once an admin has typed the Iran
+server's SSH login into this bot via "🔑 تنظیم SSH سرور ایران" — that value
+never has to pass through anyone else, including whoever wrote this code.
 
 Multi-step actions (the ones that need a follow-up value, like "which
 email?") use a small per-admin pending-action dict instead of aiogram FSM —
 there's only ever one flow in flight per admin, so a full state machine
-would be overhead without upside.
+would be overhead without upside. Flows with more than one follow-up value
+(e.g. "new panel: URL, then user, then password...") manage their own
+stage transitions and are responsible for popping themselves out of
+`_pending` on their last step.
 """
 import json
 import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import time
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 import config
 import db
 from handlers import ops
+from utils import iran_ssh
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -40,6 +58,47 @@ def _admin(message: Message) -> bool:
     return message.from_user.id in config.ADMIN_IDS
 
 
+def _size(n: int) -> str:
+    return f"{n / 1024**3:.2f}GB" if n >= 1024**3 else f"{n / 1024**2:.0f}MB"
+
+
+def _env_path() -> str:
+    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(bot_dir, ".env")
+
+
+def _service_names() -> tuple[str, str]:
+    """(sales-bot service, dev-bot service) — matches setup_iran_vpn.sh's `${SVC}-dev` naming."""
+    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    install_dir = os.path.dirname(bot_dir)
+    service = os.path.basename(install_dir)
+    return service, f"{service}-dev"
+
+
+def _set_env_var(env_path: str, key: str, value: str):
+    lines = []
+    if os.path.isfile(env_path):
+        with open(env_path) as fh:
+            lines = fh.readlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[i] = f"{key}={value}\n"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}\n")
+    with open(env_path, "w") as fh:
+        fh.writelines(lines)
+
+
+def _list_clients(x: XUIClient) -> list[dict]:
+    inbound = x.get_inbound()
+    settings = inbound.get("settings")
+    settings = json.loads(settings) if isinstance(settings, str) else (settings or {})
+    return settings.get("clients") or []
+
+
 MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔎 بررسی کامل"), KeyboardButton(text="👥 کلاینت‌ها")],
@@ -47,19 +106,34 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text="🧪 تست تونل"), KeyboardButton(text="♻️ ری‌استارت Xray")],
         [KeyboardButton(text="⬆️ آپدیت کد"), KeyboardButton(text="🆔 شناسایی پردازش")],
         [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
-        [KeyboardButton(text="💻 وضعیت سرور"), KeyboardButton(text="💾 بکاپ دیتابیس")],
-        [KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="🧾 سفارش‌های اخیر")],
-        [KeyboardButton(text="📢 پیام همگانی"), KeyboardButton(text="🗑 حذف کلاینت")],
-        [KeyboardButton(text="⏳ تمدید کلاینت"), KeyboardButton(text="🚫 غیرفعال‌سازی کلاینت")],
+        [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
+        [KeyboardButton(text="🚫 لیست مسدودی‌های Fail2ban"), KeyboardButton(text="✅ رفع مسدودیت IP")],
+        [KeyboardButton(text="📡 پینگ سرور ایران"), KeyboardButton(text="🖥 وضعیت کامل سیستم")],
+        [KeyboardButton(text="💻 وضعیت سرور"), KeyboardButton(text="📄 خطاهای اخیر")],
+        [KeyboardButton(text="🔎 بررسی یکپارچگی دیتابیس"), KeyboardButton(text="💾 بکاپ دیتابیس")],
+        [KeyboardButton(text="♻️ ری‌استارت ربات فروش"), KeyboardButton(text="♻️ ری‌استارت ربات مدیریت (خودم)")],
+        [KeyboardButton(text="♻️ ری‌استارت پنل X-UI (SSH)")],
+        [KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="📊 گزارش مالی")],
+        [KeyboardButton(text="🧾 سفارش‌های اخیر"), KeyboardButton(text="📢 پیام همگانی")],
+        [KeyboardButton(text="🆕 کلاینت جدید"), KeyboardButton(text="📦 ساخت انبوه")],
+        [KeyboardButton(text="🔍 وضعیت کلاینت"), KeyboardButton(text="➕ افزایش حجم/زمان")],
+        [KeyboardButton(text="⏳ تمدید کلاینت"), KeyboardButton(text="🔒 مسدود/فعال کلاینت")],
+        [KeyboardButton(text="🗑 حذف کلاینت"), KeyboardButton(text="🔄 تمدید انبوه")],
+        [KeyboardButton(text="🗑 حذف انبوه (منقضی‌شده‌ها)")],
+        [KeyboardButton(text="🛒 خرید سرویس"), KeyboardButton(text="📦 خرید عمده")],
+        [KeyboardButton(text="🔄 تمدید سرویس"), KeyboardButton(text="🧪 تست")],
+        [KeyboardButton(text="📶 وضعیت سرویس من"), KeyboardButton(text="♻️ دریافت دوباره لینک")],
+        [KeyboardButton(text="🆘 پشتیبانی")],
         [KeyboardButton(text="📖 راهنما")],
     ],
     resize_keyboard=True,
 )
 
 HELP = (
-    "🤖 ربات توسعه‌دهنده iranvpn — همه‌ی کارهای نگهداری از همین‌جا:\n\n"
-    "هر دکمه‌ی زیر معادل یک کار نگهداری‌ست؛ نیازی به SSH یا پنل نیست.\n"
-    "برای لغو یک عملیات چندمرحله‌ای (مثل تغییر دامنه یا حذف کلاینت) هر وقت خواستی /cancel بفرست."
+    "🤖 ربات توسعه‌دهنده iranvpn — همه‌ی کارهای نگهداری و فروش از همین‌جا:\n\n"
+    "هر دکمه‌ی زیر معادل یک کار نگهداری یا فروش‌ه؛ نیازی به SSH یا پنل نیست، "
+    "مگر برای امکانات مربوط به fail2ban/ری‌استارت پنل که یک‌بار باید SSH سرور ایران رو تنظیم کنی.\n"
+    "برای لغو یک عملیات چندمرحله‌ای هر وقت خواستی /cancel بفرست."
 )
 
 
@@ -229,7 +303,233 @@ async def toggle_inbound(message: Message):
         await message.answer(f"❌ ناموفق: {e}")
 
 
-# ---------------------------------------------------------------- new: server resources
+# ---------------------------------------------------------------- new: repoint at a different panel
+
+@router.message(F.text == "🔧 اتصال پنل جدید")
+async def ask_new_panel(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "new_panel", "stage": "url"}
+    await message.answer(
+        "آدرس کامل پنل رو بفرست (شامل پورت و web base path)، مثلاً:\n"
+        "http://85.198.48.9:60231/xxxxxxxx\n\n/cancel برای لغو."
+    )
+
+
+async def _new_panel_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+
+    if stage == "url":
+        pending["url"] = text.rstrip("/")
+        pending["stage"] = "user"
+        _pending[message.from_user.id] = pending
+        await message.answer("یوزرنیم پنل رو بفرست:")
+        return
+    if stage == "user":
+        pending["user"] = text
+        pending["stage"] = "password"
+        _pending[message.from_user.id] = pending
+        await message.answer("پسورد پنل رو بفرست:")
+        return
+    if stage == "password":
+        pending["password"] = text
+        pending["stage"] = "token"
+        _pending[message.from_user.id] = pending
+        await message.answer("اگه API token داری بفرست، وگرنه فقط - بفرست:")
+        return
+    if stage == "token":
+        pending["token"] = "" if text == "-" else text
+        pending["stage"] = "inbound"
+        _pending[message.from_user.id] = pending
+        await message.answer("شماره‌ی inbound ID رو بفرست (اگه نمی‌دونی 1 بفرست):")
+        return
+    if stage == "inbound":
+        try:
+            inbound_id = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر. از 🔧 اتصال پنل جدید دوباره شروع کن.")
+            return
+        _pending.pop(message.from_user.id, None)
+        await _apply_new_panel(message, pending["url"], pending["user"], pending["password"],
+                                pending["token"], inbound_id)
+
+
+async def _apply_new_panel(message: Message, url: str, user: str, password: str, token: str, inbound_id: int):
+    await message.answer("⏳ در حال بررسی اتصال به پنل جدید…")
+    test = XUIClient(base_url=url, username=user, password=password, api_token=token)
+    try:
+        test.get_inbound(inbound_id)
+    except XUIError as e:
+        await message.answer(f"❌ اتصال ناموفق — چیزی تغییر نکرد:\n{e}")
+        return
+
+    env_path = _env_path()
+    _set_env_var(env_path, "XUI_BASE_URL", url)
+    _set_env_var(env_path, "XUI_USERNAME", user)
+    _set_env_var(env_path, "XUI_PASSWORD", password)
+    _set_env_var(env_path, "XUI_API_TOKEN", token)
+    _set_env_var(env_path, "XUI_INBOUND_ID", str(inbound_id))
+    await message.answer("✅ اتصال تایید شد. تنظیمات ذخیره شد و هر دو ربات ری‌استارت می‌شن…")
+    sales, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", sales])
+    subprocess.Popen(["systemctl", "restart", dev])
+
+
+# ---------------------------------------------------------------- new: Iran server SSH setup
+
+@router.message(F.text == "🔑 تنظیم SSH سرور ایران")
+async def ask_iran_ssh(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "iran_ssh", "stage": "host"}
+    await message.answer("آی‌پی یا هاست سرور ایران رو بفرست (مثلاً 85.198.48.9). /cancel برای لغو.")
+
+
+async def _iran_ssh_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+    if stage == "host":
+        pending["host"] = text
+        pending["stage"] = "port"
+        _pending[message.from_user.id] = pending
+        await message.answer("پورت SSH رو بفرست (اگه نمی‌دونی 22 بفرست):")
+        return
+    if stage == "port":
+        try:
+            pending["port"] = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر. از اول شروع کن.")
+            return
+        pending["stage"] = "user"
+        _pending[message.from_user.id] = pending
+        await message.answer("یوزرنیم SSH رو بفرست (مثلاً root یا ubuntu):")
+        return
+    if stage == "user":
+        pending["user"] = text
+        pending["stage"] = "password"
+        _pending[message.from_user.id] = pending
+        await message.answer("پسورد SSH رو بفرست:")
+        return
+    if stage == "password":
+        _pending.pop(message.from_user.id, None)
+        await _apply_iran_ssh(message, pending["host"], pending["port"], pending["user"], text)
+
+
+async def _apply_iran_ssh(message: Message, host: str, port: int, user: str, password: str):
+    await message.answer("⏳ در حال تست اتصال SSH…")
+    try:
+        import paramiko
+    except ImportError:
+        await message.answer("❌ ماژول paramiko نصب نیست؛ یک بار /update بزن.")
+        return
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(host, port=port, username=user, password=password, timeout=15)
+        client.exec_command("echo ok")
+    except Exception as e:
+        await message.answer(f"❌ اتصال ناموفق — چیزی ذخیره نشد:\n{type(e).__name__}: {e}")
+        return
+    finally:
+        client.close()
+
+    env_path = _env_path()
+    _set_env_var(env_path, "IRAN_SSH_HOST", host)
+    _set_env_var(env_path, "IRAN_SSH_PORT", str(port))
+    _set_env_var(env_path, "IRAN_SSH_USER", user)
+    _set_env_var(env_path, "IRAN_SSH_PASSWORD", password)
+    await message.answer("✅ اتصال تایید شد و ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
+    _, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", dev])
+
+
+# ---------------------------------------------------------------- new: fail2ban (needs Iran SSH)
+
+def _jail_list(status_out: str) -> list[str]:
+    for line in status_out.splitlines():
+        if "Jail list" in line:
+            after = line.split(":", 1)[-1]
+            return [j.strip() for j in after.replace("\t", ",").split(",") if j.strip()]
+    return []
+
+
+@router.message(F.text == "🚫 لیست مسدودی‌های Fail2ban")
+async def fail2ban_list(message: Message):
+    if not _admin(message):
+        return
+    try:
+        out, _ = iran_ssh.run("sudo fail2ban-client status")
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    jails = _jail_list(out)
+    if not jails:
+        await message.answer("هیچ jail‌ای پیدا نشد یا fail2ban نصب نیست.")
+        return
+
+    lines = []
+    for jail in jails:
+        try:
+            jout, _ = iran_ssh.run(f"sudo fail2ban-client status {jail}")
+        except iran_ssh.IranSSHError as e:
+            lines.append(f"• {jail}: خطا ({e})")
+            continue
+        banned = ""
+        for line in jout.splitlines():
+            if "Banned IP list" in line:
+                banned = line.split(":", 1)[-1].strip()
+        lines.append(f"• {jail}: {banned or '(خالی)'}")
+    await message.answer("🚫 مسدودی‌های فعلی:\n\n" + "\n".join(lines))
+
+
+@router.message(F.text == "✅ رفع مسدودیت IP")
+async def ask_unban(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "unban_ip"}
+    await message.answer("آی‌پی‌ای که باید رفع مسدودیت بشه رو بفرست (روی همه‌ی jail‌ها امتحان می‌شه). /cancel برای لغو.")
+
+
+async def _do_unban(message: Message, ip: str):
+    try:
+        out, _ = iran_ssh.run("sudo fail2ban-client status")
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    jails = _jail_list(out)
+    freed = []
+    for jail in jails:
+        try:
+            o, _ = iran_ssh.run(f"sudo fail2ban-client set {jail} unbanip {ip}")
+            if o.strip():
+                freed.append(jail)
+        except iran_ssh.IranSSHError:
+            pass
+    if freed:
+        await message.answer(f"✅ آی‌پی {ip} از این jail‌ها آزاد شد: {', '.join(freed)}")
+    else:
+        await message.answer(f"آی‌پی {ip} در هیچ jail‌ای مسدود نبود (یا خطا رخ داد).")
+
+
+# ---------------------------------------------------------------- new: ping + full status + errors
+
+@router.message(F.text == "📡 پینگ سرور ایران")
+async def ping_iran(message: Message):
+    if not _admin(message):
+        return
+    host = config.XUI_PUBLIC_HOST or config.IRAN_SSH_HOST
+    if not host:
+        await message.answer("آدرس سرور ایران مشخص نیست (XUI_PUBLIC_HOST خالیه).")
+        return
+    try:
+        result = subprocess.run(["ping", "-c", "4", "-W", "3", host],
+                                capture_output=True, text=True, timeout=20)
+        await message.answer(f"📡 پینگ {host}:\n\n<pre>{result.stdout[-2500:]}</pre>", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"❌ ping ناموفق: {type(e).__name__}: {e}")
+
 
 @router.message(F.text == "💻 وضعیت سرور")
 async def server_status(message: Message):
@@ -266,7 +566,95 @@ async def server_status(message: Message):
         lines.append(f"آپ‌تایم سرور: {days:.1f} روز")
     except (OSError, ValueError):
         pass
-    await message.answer("💻 وضعیت سرور:\n\n" + "\n".join(lines))
+    await message.answer("💻 وضعیت سرور (Nautilus):\n\n" + "\n".join(lines))
+
+
+@router.message(F.text == "🖥 وضعیت کامل سیستم")
+async def full_system_status(message: Message):
+    if not _admin(message):
+        return
+    await ops.diag(message)
+    await server_status(message)
+    if iran_ssh.configured():
+        try:
+            out, _ = iran_ssh.run(
+                "uptime && echo --- && free -h && echo --- && df -h / && echo --- && "
+                "(sudo fail2ban-client status 2>/dev/null | grep 'Jail list' || echo 'fail2ban: n/a')"
+            )
+            await message.answer("🇮🇷 وضعیت سرور ایران:\n\n<pre>" + out[-3000:] + "</pre>", parse_mode="HTML")
+        except iran_ssh.IranSSHError as e:
+            await message.answer(f"🇮🇷 وضعیت سرور ایران: خطا ({e})")
+    else:
+        await message.answer("🇮🇷 برای وضعیت سرور ایران، اول 🔑 تنظیم SSH سرور ایران رو انجام بده.")
+
+
+@router.message(F.text == "📄 خطاهای اخیر")
+async def recent_errors(message: Message):
+    if not _admin(message):
+        return
+    sales, dev = _service_names()
+    for svc in (sales, dev):
+        try:
+            out = subprocess.run(["journalctl", "-u", svc, "-n", "25", "--no-pager", "-p", "err"],
+                                 capture_output=True, text=True, timeout=15).stdout
+        except Exception as e:
+            out = f"({e})"
+        await message.answer(f"📄 خطاهای اخیر {svc}:\n\n<pre>{(out or '(چیزی نبود)')[-2500:]}</pre>",
+                             parse_mode="HTML")
+    if iran_ssh.configured():
+        try:
+            out, _ = iran_ssh.run("sudo journalctl -u x-ui -n 25 --no-pager -p err 2>&1 || true")
+            await message.answer(f"📄 خطاهای اخیر x-ui (ایران):\n\n<pre>{(out or '(چیزی نبود)')[-2500:]}</pre>",
+                                 parse_mode="HTML")
+        except iran_ssh.IranSSHError as e:
+            await message.answer(f"📄 خطاهای x-ui (ایران): خطا در اتصال ({e})")
+
+
+# ---------------------------------------------------------------- new: maintenance restarts + integrity
+
+@router.message(F.text == "🔎 بررسی یکپارچگی دیتابیس")
+async def db_integrity(message: Message):
+    if not _admin(message):
+        return
+    try:
+        with sqlite3.connect(config.DB_PATH) as conn:
+            result = conn.execute("PRAGMA integrity_check;").fetchone()[0]
+        await message.answer(f"🔎 نتیجه‌ی بررسی دیتابیس: {result}")
+    except Exception as e:
+        await message.answer(f"❌ خطا: {type(e).__name__}: {e}")
+
+
+@router.message(F.text == "♻️ ری‌استارت ربات فروش")
+async def restart_sales(message: Message):
+    if not _admin(message):
+        return
+    sales, _ = _service_names()
+    await message.answer(f"♻️ در حال ری‌استارت {sales}…")
+    subprocess.Popen(["systemctl", "restart", sales])
+
+
+@router.message(F.text == "♻️ ری‌استارت ربات مدیریت (خودم)")
+async def restart_self(message: Message):
+    if not _admin(message):
+        return
+    _, dev = _service_names()
+    await message.answer(f"♻️ در حال ری‌استارت {dev}…")
+    subprocess.Popen(["systemctl", "restart", dev])
+
+
+@router.message(F.text == "♻️ ری‌استارت پنل X-UI (SSH)")
+async def restart_xui_panel(message: Message):
+    if not _admin(message):
+        return
+    try:
+        out, err = iran_ssh.run("sudo systemctl restart x-ui && echo RESTARTED")
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    if "RESTARTED" in out:
+        await message.answer("✅ پنل X-UI روی سرور ایران ری‌استارت شد.")
+    else:
+        await message.answer(f"⚠️ نتیجه نامشخص:\n{out}\n{err}")
 
 
 # ---------------------------------------------------------------- new: database backup
@@ -290,7 +678,7 @@ async def backup_db(message: Message):
         await message.answer(f"❌ گرفتن بکاپ ناموفق بود: {type(e).__name__}: {e}")
 
 
-# ---------------------------------------------------------------- new: stats + orders
+# ---------------------------------------------------------------- new: stats + orders + finance
 
 @router.message(F.text == "📊 آمار کلی")
 async def stats_cmd(message: Message):
@@ -305,6 +693,19 @@ async def stats_cmd(message: Message):
         f"سفارش‌های تاییدشده: {s['orders_approved']} — جمع {s['revenue_total']:,} تومان\n"
         f"سفارش‌های در انتظار بررسی: {s['orders_pending']}"
     )
+
+
+@router.message(F.text == "📊 گزارش مالی")
+async def financial_report(message: Message):
+    if not _admin(message):
+        return
+    periods = [("۲۴ ساعت گذشته", 24 * 3600), ("۷ روز گذشته", 7 * 24 * 3600),
+              ("۳۰ روز گذشته", 30 * 24 * 3600), ("کل دوران", None)]
+    lines = []
+    for label, seconds in periods:
+        cnt, total = db.report_since(seconds)
+        lines.append(f"{label}: {cnt} سفارش — {total:,} تومان")
+    await message.answer("📊 گزارش مالی:\n\n" + "\n".join(lines))
 
 
 @router.message(F.text == "🧾 سفارش‌های اخیر")
@@ -344,50 +745,222 @@ async def _do_broadcast(message: Message, text: str):
     await status_msg.edit_text(f"✅ ارسال شد: {sent} موفق، {failed} ناموفق (بلاک یا حذف‌شده).")
 
 
-# ---------------------------------------------------------------- new: per-client actions
+# ---------------------------------------------------------------- new: single client create/lookup/increase
 
-@router.message(F.text == "🗑 حذف کلاینت")
-async def ask_delete_client(message: Message):
+@router.message(F.text == "🆕 کلاینت جدید")
+async def ask_new_client(message: Message):
     if not _admin(message):
         return
-    _pending[message.from_user.id] = {"action": "delete_client"}
-    await message.answer("ایمیل کلاینتی که باید حذف بشه رو بفرست (مثل 👥 کلاینت‌ها می‌بینی). /cancel برای لغو.")
+    _pending[message.from_user.id] = {"action": "new_client", "stage": "email"}
+    await message.answer("ایمیل/شناسه‌ی کلاینت جدید رو بفرست (مثلاً user-ali). /cancel برای لغو.")
 
 
-async def _do_delete_client(message: Message, email: str):
+async def _new_client_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+    if stage == "email":
+        pending["email"] = text
+        pending["stage"] = "gb"
+        _pending[message.from_user.id] = pending
+        await message.answer("چند گیگ؟ (0 = نامحدود)")
+        return
+    if stage == "gb":
+        try:
+            pending["gb"] = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        pending["stage"] = "days"
+        _pending[message.from_user.id] = pending
+        await message.answer("چند روز؟ (0 = بدون انقضا)")
+        return
+    if stage == "days":
+        try:
+            days = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        _pending.pop(message.from_user.id, None)
+        await _create_client(message, pending["email"], pending["gb"], days)
+
+
+async def _create_client(message: Message, email: str, gb: int, days: int):
     x = XUIClient()
     try:
-        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
-        await message.answer(f"✅ کلاینت {email} حذف شد.")
+        client = x.add_client(email=email, gb=gb, days=days)
+        link = x.build_vless_link(client["uuid"], email)
     except XUIError as e:
         await message.answer(f"❌ ناموفق: {e}")
+        return
+    await message.answer(f"✅ کلاینت ساخته شد: {email}\n\n<code>{link}</code>", parse_mode="HTML")
 
 
-@router.message(F.text == "🚫 غیرفعال‌سازی کلاینت")
-async def ask_disable_client(message: Message):
+@router.message(F.text == "📦 ساخت انبوه")
+async def ask_bulk_create(message: Message):
     if not _admin(message):
         return
-    _pending[message.from_user.id] = {"action": "disable_client"}
-    await message.answer("ایمیل کلاینتی که باید غیرفعال بشه رو بفرست. /cancel برای لغو.")
+    _pending[message.from_user.id] = {"action": "bulk_create", "stage": "count"}
+    await message.answer("چند تا کلاینت ساخته بشه؟ (حداکثر ۲۰۰) عدد بفرست. /cancel برای لغو.")
 
 
-async def _do_disable_client(message: Message, email: str):
+async def _bulk_create_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+    if stage == "count":
+        try:
+            count = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        if count < 1 or count > 200:
+            await message.answer("عدد باید بین ۱ تا ۲۰۰ باشه.")
+            return
+        pending["count"] = count
+        pending["stage"] = "gb"
+        _pending[message.from_user.id] = pending
+        await message.answer("هر کلاینت چند گیگ؟ (0 = نامحدود)")
+        return
+    if stage == "gb":
+        try:
+            pending["gb"] = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        pending["stage"] = "days"
+        _pending[message.from_user.id] = pending
+        await message.answer("هر کلاینت چند روز؟ (0 = بدون انقضا)")
+        return
+    if stage == "days":
+        try:
+            days = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        _pending.pop(message.from_user.id, None)
+        await _do_bulk_create(message, pending["count"], pending["gb"], days)
+
+
+async def _do_bulk_create(message: Message, count: int, gb: int, days: int):
     x = XUIClient()
-    traffic = x.get_client_traffic(email)
-    if not traffic:
+    prefix = f"batch{int(time.time())}"
+    created, failed = [], []
+    for i in range(count):
+        email = f"{prefix}-{i + 1}"
+        try:
+            client = x.add_client(email=email, gb=gb, days=days)
+            link = x.build_vless_link(client["uuid"], email)
+            created.append((email, link))
+        except XUIError as e:
+            failed.append(f"{email}: {e}")
+    text = f"✅ {len(created)} کلاینت ساخته شد (پیشوند: {prefix}).\n\n"
+    text += "\n\n".join(f"{em}\n{link}" for em, link in created[:10])
+    if len(created) > 10:
+        text += f"\n\n…و {len(created) - 10} مورد دیگه."
+    if failed:
+        text += "\n\n❌ ناموفق:\n" + "\n".join(failed[:5])
+    await message.answer(text)
+
+
+@router.message(F.text == "🔍 وضعیت کلاینت")
+async def ask_client_status(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "client_status"}
+    await message.answer("ایمیل کلاینتی که می‌خوای ببینی رو بفرست. /cancel برای لغو.")
+
+
+async def _do_client_status(message: Message, email: str):
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
         await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
         return
-    body = {"email": email, "totalGB": traffic.get("total", 0),
-            "expiryTime": traffic.get("expiryTime", 0), "enable": False}
+    exp = t.get("expiryTime", 0)
+    exp_str = "بدون انقضا" if not exp else time.strftime("%Y-%m-%d %H:%M", time.localtime(exp / 1000))
+    total = t.get("total", 0)
+    used = t.get("up", 0) + t.get("down", 0)
+    await message.answer(
+        f"🔍 {email}\n"
+        f"مصرف: {_size(used)} از {_size(total) if total else 'نامحدود'}\n"
+        f"انقضا: {exp_str}\n"
+        f"فعال: {'بله' if t.get('enable', True) else 'خیر'}"
+    )
+
+
+@router.message(F.text == "➕ افزایش حجم/زمان")
+async def ask_increase(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "increase", "stage": "email"}
+    await message.answer("ایمیل کلاینت رو بفرست. /cancel برای لغو.")
+
+
+async def _increase_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+    if stage == "email":
+        pending["email"] = text
+        pending["stage"] = "gb"
+        _pending[message.from_user.id] = pending
+        await message.answer("چند گیگ اضافه بشه؟ (0 = بدون تغییر — روی پلن‌های نامحدود بی‌اثره)")
+        return
+    if stage == "gb":
+        try:
+            pending["add_gb"] = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        pending["stage"] = "days"
+        _pending[message.from_user.id] = pending
+        await message.answer("چند روز اضافه بشه؟ (0 = بدون تغییر)")
+        return
+    if stage == "days":
+        try:
+            add_days = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        _pending.pop(message.from_user.id, None)
+        await _do_increase(message, pending["email"], pending["add_gb"], add_days)
+
+
+async def _do_increase(message: Message, email: str, add_gb: int, add_days: int):
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
+        await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
+        return
+    cur_total = t.get("total", 0)
+    skipped_gb = False
+    if cur_total == 0:
+        new_total = 0
+        skipped_gb = add_gb > 0
+    else:
+        new_total = cur_total + add_gb * 1024**3
+    now_ms = int(time.time() * 1000)
+    cur_exp = t.get("expiryTime", 0)
+    if add_days:
+        base = cur_exp if cur_exp and cur_exp > now_ms else now_ms
+        new_exp = base + add_days * 86400 * 1000
+    else:
+        new_exp = cur_exp
+    body = {"email": email, "totalGB": new_total, "expiryTime": new_exp, "enable": True}
     flow = x.client_flow()
     if flow:
         body["flow"] = flow
     try:
         x._request("POST", f"/panel/api/clients/update/{email}", json=body)
-        await message.answer(f"✅ کلاینت {email} غیرفعال شد.")
+        msg = f"✅ {email}: {add_days} روز اضافه شد."
+        if skipped_gb:
+            msg += " (این کلاینت نامحدود بود؛ حجم تغییر نکرد.)"
+        elif add_gb:
+            msg = f"✅ {email}: {add_gb} گیگ و {add_days} روز اضافه شد."
+        await message.answer(msg)
     except XUIError as e:
         await message.answer(f"❌ ناموفق: {e}")
 
+
+# ---------------------------------------------------------------- per-client extend/toggle/delete
 
 @router.message(F.text == "⏳ تمدید کلاینت")
 async def ask_extend_client(message: Message):
@@ -418,6 +991,159 @@ async def _do_extend_client(message: Message, email: str, days: int):
         await message.answer(f"❌ ناموفق: {e}")
 
 
+@router.message(F.text == "🔒 مسدود/فعال کلاینت")
+async def ask_toggle_client(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "toggle_client"}
+    await message.answer("ایمیل کلاینتی که می‌خوای فعال/غیرفعال کنی رو بفرست. /cancel برای لغو.")
+
+
+async def _do_toggle_client(message: Message, email: str):
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
+        await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
+        return
+    new_state = not t.get("enable", True)
+    body = {"email": email, "totalGB": t.get("total", 0), "expiryTime": t.get("expiryTime", 0), "enable": new_state}
+    flow = x.client_flow()
+    if flow:
+        body["flow"] = flow
+    try:
+        x._request("POST", f"/panel/api/clients/update/{email}", json=body)
+        await message.answer(f"✅ {email} حالا {'فعال' if new_state else 'غیرفعال'} است.")
+    except XUIError as e:
+        await message.answer(f"❌ ناموفق: {e}")
+
+
+@router.message(F.text == "🗑 حذف کلاینت")
+async def ask_delete_client(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "delete_client"}
+    await message.answer("ایمیل کلاینتی که باید حذف بشه رو بفرست (مثل 👥 کلاینت‌ها می‌بینی). /cancel برای لغو.")
+
+
+async def _do_delete_client(message: Message, email: str):
+    x = XUIClient()
+    try:
+        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
+        await message.answer(f"✅ کلاینت {email} حذف شد.")
+    except XUIError as e:
+        await message.answer(f"❌ ناموفق: {e}")
+
+
+# ---------------------------------------------------------------- bulk renew / bulk delete expired
+
+@router.message(F.text == "🔄 تمدید انبوه")
+async def ask_bulk_renew(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "bulk_renew"}
+    await message.answer("همه‌ی کلاینت‌های فعال چند روز تمدید بشن؟ فقط عدد بفرست. /cancel برای لغو.")
+
+
+async def _do_bulk_renew(message: Message, days: int):
+    x = XUIClient()
+    try:
+        clients = _list_clients(x)
+    except (XUIError, ValueError) as e:
+        await message.answer(f"❌ خطا: {e}")
+        return
+    now_ms = int(time.time() * 1000)
+    renewed, failed = 0, []
+    flow = x.client_flow()
+    for c in clients:
+        em = c.get("email")
+        t = x.get_client_traffic(em) or {}
+        exp = t.get("expiryTime", 0)
+        if exp and exp < now_ms:
+            continue  # expired clients go through bulk delete, not bulk renew
+        base = exp if exp and exp > now_ms else now_ms
+        body = {"email": em, "totalGB": t.get("total", 0), "expiryTime": base + days * 86400 * 1000,
+                "enable": True}
+        if flow:
+            body["flow"] = flow
+        try:
+            x._request("POST", f"/panel/api/clients/update/{em}", json=body)
+            renewed += 1
+        except XUIError as e:
+            failed.append(f"{em}: {e}")
+    msg = f"✅ {renewed} کلاینت فعال {days} روز تمدید شد."
+    if failed:
+        msg += "\n\n❌ ناموفق:\n" + "\n".join(failed[:5])
+    await message.answer(msg)
+
+
+@router.message(F.text == "🗑 حذف انبوه (منقضی‌شده‌ها)")
+async def bulk_delete_expired(message: Message):
+    if not _admin(message):
+        return
+    x = XUIClient()
+    try:
+        clients = _list_clients(x)
+    except (XUIError, ValueError) as e:
+        await message.answer(f"❌ خطا: {e}")
+        return
+    now_ms = time.time() * 1000
+    expired = []
+    for c in clients:
+        em = c.get("email")
+        t = x.get_client_traffic(em) or {}
+        exp = t.get("expiryTime", 0)
+        if exp and exp < now_ms:
+            expired.append(em)
+    if not expired:
+        await message.answer("هیچ کلاینت منقضی‌شده‌ای پیدا نشد.")
+        return
+    _pending[message.from_user.id] = {"action": "bulk_delete_confirm", "emails": expired}
+    preview = "\n".join(expired[:15]) + ("\n…" if len(expired) > 15 else "")
+    await message.answer(
+        f"{len(expired)} کلاینت منقضی پیدا شد:\n{preview}\n\n"
+        "برای حذف قطعی «بله» رو بفرست. /cancel برای لغو."
+    )
+
+
+async def _do_bulk_delete(message: Message, emails: list[str]):
+    x = XUIClient()
+    deleted, failed = 0, []
+    for em in emails:
+        try:
+            x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=em)
+            deleted += 1
+        except XUIError as e:
+            failed.append(f"{em}: {e}")
+    msg = f"✅ {deleted} کلاینت حذف شد."
+    if failed:
+        msg += "\n\n❌ ناموفق:\n" + "\n".join(failed[:5])
+    await message.answer(msg)
+
+
+# ---------------------------------------------------------------- support inbox (relayed from the sales bot)
+
+@router.callback_query(F.data.startswith("supportreply:"))
+async def support_reply_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    target_tg_id = int(callback.data.split(":", 1)[1])
+    _pending[callback.from_user.id] = {"action": "support_reply", "target": target_tg_id}
+    await callback.message.answer(f"پاسخت رو برای کاربر {target_tg_id} بنویس:")
+    await callback.answer()
+
+
+async def _do_support_reply(message: Message, target_tg_id: int, text: str):
+    sales_bot = Bot(token=config.BOT_TOKEN)
+    try:
+        await sales_bot.send_message(target_tg_id, f"👤 پاسخ پشتیبانی:\n\n{text}")
+        await message.answer("✅ پاسخ برای کاربر ارسال شد.")
+    except Exception as e:
+        await message.answer(f"❌ ارسال ناموفق: {type(e).__name__}: {e}")
+    finally:
+        await sales_bot.session.close()
+
+
 # ---------------------------------------------------------------- pending-action dispatch
 # Only fires when this admin has an open multi-step flow — everything else
 # (including menu button text that doesn't match) falls through untouched
@@ -429,26 +1155,66 @@ def _has_pending(message: Message) -> bool:
 
 @router.message(_has_pending)
 async def handle_pending(message: Message):
-    pending = _pending.pop(message.from_user.id)
+    pending = _pending[message.from_user.id]
     action = pending["action"]
     text = message.text.strip()
 
+    # Multi-stage flows manage their own _pending updates and pop themselves
+    # once their last stage is reached.
+    if action == "new_panel":
+        await _new_panel_step(message, pending)
+        return
+    if action == "iran_ssh":
+        await _iran_ssh_step(message, pending)
+        return
+    if action == "new_client":
+        await _new_client_step(message, pending)
+        return
+    if action == "bulk_create":
+        await _bulk_create_step(message, pending)
+        return
+    if action == "increase":
+        await _increase_step(message, pending)
+        return
+    if action == "extend_client":
+        if pending["stage"] == "email":
+            _pending[message.from_user.id] = {"action": "extend_client", "stage": "days", "email": text}
+            await message.answer("چند روز تمدید بشه؟ فقط عدد بفرست.")
+        else:
+            _pending.pop(message.from_user.id, None)
+            try:
+                days = int(text)
+            except ValueError:
+                await message.answer("عدد نامعتبر. از ⏳ تمدید کلاینت دوباره شروع کن.")
+                return
+            await _do_extend_client(message, pending["email"], days)
+        return
+
+    # Single-stage flows: pop, then dispatch.
+    _pending.pop(message.from_user.id, None)
     if action == "change_dest":
         await _apply_new_dest(message, text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
     elif action == "delete_client":
         await _do_delete_client(message, text)
-    elif action == "disable_client":
-        await _do_disable_client(message, text)
-    elif action == "extend_client":
-        if pending["stage"] == "email":
-            _pending[message.from_user.id] = {"action": "extend_client", "stage": "days", "email": text}
-            await message.answer("چند روز تمدید بشه؟ فقط عدد بفرست.")
+    elif action == "toggle_client":
+        await _do_toggle_client(message, text)
+    elif action == "unban_ip":
+        await _do_unban(message, text)
+    elif action == "client_status":
+        await _do_client_status(message, text)
+    elif action == "bulk_renew":
+        try:
+            days = int(text)
+        except ValueError:
+            await message.answer("عدد نامعتبر.")
+            return
+        await _do_bulk_renew(message, days)
+    elif action == "bulk_delete_confirm":
+        if text in ("بله", "بله.", "yes", "Yes"):
+            await _do_bulk_delete(message, pending["emails"])
         else:
-            try:
-                days = int(text)
-            except ValueError:
-                await message.answer("عدد نامعتبر. از 🔁 دوباره شروع کن.")
-                return
-            await _do_extend_client(message, pending["email"], days)
+            await message.answer("لغو شد؛ چیزی حذف نشد.")
+    elif action == "support_reply":
+        await _do_support_reply(message, pending["target"], message.text)
