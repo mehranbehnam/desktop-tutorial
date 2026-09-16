@@ -5,6 +5,7 @@ and answers in Telegram.
 """
 import email.utils
 import json
+import os
 import logging
 import time
 
@@ -26,6 +27,7 @@ HELP = (
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
     "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
+    "/update — دریافت آخرین نسخه‌ی کد و ری‌استارت\n"
     "/ops — همین راهنما"
 )
 
@@ -246,3 +248,70 @@ async def fixkeys(message: Message):
             parse_mode="Markdown")
     except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
+
+
+RAW = ("https://raw.githubusercontent.com/mehranbehnam/desktop-tutorial/"
+       "refs/heads/claude/iran-vpn-turkey-d2hbvg/hermes-vpn-bot")
+FILES = [
+    "bot/config.py", "bot/db.py", "bot/keyboards.py", "bot/main.py", "bot/xui_client.py",
+    "bot/handlers/__init__.py", "bot/handlers/admin.py", "bot/handlers/buy.py",
+    "bot/handlers/renew.py", "bot/handlers/start.py", "bot/handlers/status.py",
+    "bot/handlers/trial.py", "bot/handlers/ops.py",
+    "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
+    "bot/utils/x25519.py",
+]
+
+
+@router.message(Command("update"))
+async def update(message: Message):
+    """Pull the latest code and restart, so fixes never need an SSH session.
+
+    Everything is staged and compile-checked first; a half-downloaded file
+    would otherwise leave the bot unable to start, with no way back in.
+    """
+    if not _admin(message):
+        return
+    import py_compile
+    import shutil
+    import subprocess
+    import tempfile
+    import urllib.request
+
+    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    install_dir = os.path.dirname(bot_dir)
+    await message.answer("⏳ در حال دریافت آخرین نسخه…")
+
+    staged, errors = {}, []
+    with tempfile.TemporaryDirectory() as tmp:
+        for rel in FILES:
+            try:
+                with urllib.request.urlopen(f"{RAW}/{rel}", timeout=30) as resp:
+                    data = resp.read()
+            except Exception as e:
+                errors.append(f"{rel}: {type(e).__name__}")
+                continue
+            path = os.path.join(tmp, rel.replace("/", "_"))
+            with open(path, "wb") as fh:
+                fh.write(data)
+            if rel.endswith(".py") and data.strip():
+                try:
+                    py_compile.compile(path, doraise=True, cfile=path + "c")
+                except py_compile.PyCompileError as e:
+                    errors.append(f"{rel}: syntax {e}")
+                    continue
+            staged[rel] = path
+
+        if errors:
+            await message.answer("❌ به‌روزرسانی انجام نشد (چیزی تغییر نکرد):\n"
+                                 + "\n".join(errors[:6]))
+            return
+
+        for rel, path in staged.items():
+            dest = os.path.join(install_dir, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copyfile(path, dest)
+
+    service = os.path.basename(install_dir)
+    await message.answer(f"✅ {len(staged)} فایل به‌روز شد.\n♻️ در حال ری‌استارت {service}…\n\n"
+                         "چند ثانیه صبر کن بعد /diag بزن.")
+    subprocess.Popen(["systemctl", "restart", service])
