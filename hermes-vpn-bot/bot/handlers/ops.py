@@ -26,6 +26,7 @@ HELP = (
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
     "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
+    "/testtunnel — تست اتصال واقعی از سرور (بدون نیاز به گوشی)\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
     "/update — دریافت آخرین نسخه‌ی کد و ری‌استارت\n"
     "/ops — همین راهنما"
@@ -315,3 +316,60 @@ async def update(message: Message):
     await message.answer(f"✅ {len(staged)} فایل به‌روز شد.\n♻️ در حال ری‌استارت {service}…\n\n"
                          "چند ثانیه صبر کن بعد /diag بزن.")
     subprocess.Popen(["systemctl", "restart", service])
+
+
+@router.message(Command("testtunnel"))
+async def testtunnel(message: Message):
+    """Connect to our own inbound as a real client, from this server.
+
+    This is the one test the user's phone cannot substitute for: it proves
+    whether a genuine Reality handshake succeeds against the inbound at all,
+    independent of their carrier, app, or device.
+    """
+    if not _admin(message):
+        return
+    from utils.tunnel_test import run_probe
+
+    await message.answer("⏳ در حال دانلود/اجرای Xray و تست اتصال واقعی به اینباند خودمان…")
+    x = XUIClient()
+
+    try:
+        inbound = x.get_inbound()
+        stream = inbound.get("streamSettings")
+        stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+        reality = stream.get("realitySettings") or {}
+        flow = x.client_flow()
+    except (XUIError, ValueError) as e:
+        await message.answer(f"❌ خواندن اینباند ناموفق: {e}")
+        return
+
+    email = f"nettest-{int(time.time())}"
+    try:
+        created = x.add_client(email=email, mb=50, hours=1)
+    except XUIError as e:
+        await message.answer(f"❌ ساخت کلاینت تستی ناموفق: {e}")
+        return
+
+    try:
+        ok, ip_or_error, log_tail = run_probe(
+            server_host=config.XUI_PUBLIC_HOST, server_port=inbound.get("port", 443),
+            uuid=created["uuid"], reality=reality, flow=flow,
+        )
+    except Exception as e:
+        await message.answer(f"❌ اجرای تست شکست خورد: {type(e).__name__}: {e}")
+        ok, log_tail = False, ""
+    finally:
+        try:
+            x.delete_client(inbound.get("id"), created["uuid"], email=email)
+        except XUIError:
+            pass
+
+    if ok:
+        msg = (f"✅ از همین سرور (فرانکفورت) به اینباند شما با موفقیت وصل شد.\n"
+               f"IP دیده‌شده: {ip_or_error}\n\n"
+               "یعنی سمت سرور کاملاً سالم است. اگر از گوشی همچنان وصل نمی‌شود، "
+               "مشکل مسیر شبکه‌ی بین اپراتور تو در ترکیه و این سرور است — "
+               "با وای‌فای یا اپراتور دیگر امتحان کن.")
+    else:
+        msg = f"❌ از این سرور هم وصل نشد ({ip_or_error}).\n\nبخشی از لاگ Xray:\n<pre>{log_tail[-3000:]}</pre>"
+    await message.answer(msg, parse_mode="HTML")

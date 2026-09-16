@@ -41,7 +41,7 @@ FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/xui_client.py bo
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
 bot/handlers/ops.py
-bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py server/test_client.py"
+bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py server/test_client.py"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
   # rather than the downloaded size.
