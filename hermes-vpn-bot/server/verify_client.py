@@ -40,6 +40,35 @@ settings = json.loads(settings) if isinstance(settings, str) else (settings or {
 inbound_clients = settings.get("clients") or []
 
 print("=" * 68)
+print("SERVER CLOCK")
+print("=" * 68)
+# Reality authentication is time-based, so a server clock that has drifted
+# rejects every client and hands them all to the fallback site.
+try:
+    import email.utils
+    import time as _time
+
+    import requests as _requests
+
+    r = _requests.get(x.base_url + "/", timeout=15,
+                      headers={"User-Agent": "Mozilla/5.0"})
+    served = r.headers.get("Date")
+    if served:
+        skew = email.utils.mktime_tz(email.utils.parsedate_tz(served)) - _time.time()
+        print(f"  panel says   : {served}")
+        print(f"  skew vs here : {skew:+.0f} seconds")
+        if abs(skew) > 90:
+            print("  FAIL  the clock has drifted far enough to break Reality auth.")
+            print("        On the Iran server: timedatectl set-ntp true")
+        else:
+            print("  OK    within the tolerance Reality needs")
+    else:
+        print("  (no Date header to compare)")
+except Exception as e:
+    print(f"  could not check: {e}")
+
+print()
+print("=" * 68)
 print("INBOUND", inbound.get("id"), "on port", inbound.get("port"))
 print("=" * 68)
 print(f"  publicKey  : {rsettings.get('publicKey')}")
@@ -120,6 +149,26 @@ else:
     print("  still does not flow, the running core has not loaded this client.")
     print("  Restart Xray to push the stored config into it:")
     print("    sudo venv/bin/python server/verify_client.py --restart")
+
+if "--set-flow" in sys.argv:
+    # Clients created before the flow fix carry none; VLESS over Reality on
+    # raw TCP needs xtls-rprx-vision on both ends or the stream stalls.
+    flow = x.client_flow()
+    print(f"\n  setting flow={flow or '(none)'} on {email} …")
+    traffic = x.get_client_traffic(email) or {}
+    body = {
+        "email": email,
+        "totalGB": traffic.get("total", 0),
+        "expiryTime": traffic.get("expiryTime", 0),
+        "enable": True,
+    }
+    if flow:
+        body["flow"] = flow
+    try:
+        x._request("POST", f"/panel/api/clients/update/{email}", json=body)
+        print("  updated — fetch the link again and reconnect.")
+    except XUIError as e:
+        print(f"  failed: {e}")
 
 if "--restart" in sys.argv:
     print("\n  restarting xray …")

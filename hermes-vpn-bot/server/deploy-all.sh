@@ -922,6 +922,7 @@ Authentication is the API token (Authorization: Bearer). Cookie login is only
 attempted as a fallback for builds that lack token auth — this one answers
 /login with 403 for any non-browser client.
 """
+import json
 import time
 
 import requests
@@ -957,6 +958,7 @@ class XUIClient:
             self.session.headers["Authorization"] = f"Bearer {self.api_token}"
         self._authed = bool(self.api_token)
         self._panel_settings = None
+        self._flow = None
 
     def _login(self):
         if self._authed:
@@ -1014,16 +1016,20 @@ class XUIClient:
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         expiry_ms = self._expiry_ms(days, hours)
         total_bytes = mb * 1024 * 1024 if mb > 0 else (gb * 1024 * 1024 * 1024 if gb > 0 else 0)
+        client = {
+            "email": email,
+            "totalGB": total_bytes,
+            "expiryTime": expiry_ms,
+            "tgId": 0,
+            "limitIp": 0,
+            "limitHwid": 0,
+            "enable": True,
+        }
+        flow = self.client_flow(inbound_id)
+        if flow:
+            client["flow"] = flow
         payload = {
-            "client": {
-                "email": email,
-                "totalGB": total_bytes,
-                "expiryTime": expiry_ms,
-                "tgId": 0,
-                "limitIp": 0,
-                "limitHwid": 0,
-                "enable": True,
-            },
+            "client": client,
             "inboundIds": [int(inbound_id)],
         }
         self._request("POST", "/panel/api/clients/add", json=payload)
@@ -1044,6 +1050,9 @@ class XUIClient:
             "expiryTime": expiry_ms,
             "enable": True,
         }
+        flow = self.client_flow(inbound_id)
+        if flow:
+            payload["flow"] = flow
         self._request("POST", f"/panel/api/clients/update/{email}", json=payload)
         return {"uuid": client_uuid, "email": email, "expiry_time": expiry_ms, "total_gb": gb}
 
@@ -1062,6 +1071,28 @@ class XUIClient:
     def get_inbound(self, inbound_id: int = None) -> dict:
         inbound_id = inbound_id or config.XUI_INBOUND_ID
         return self._request("GET", f"/panel/api/inbounds/get/{inbound_id}")
+
+    def client_flow(self, inbound_id: int = None) -> str:
+        """The XTLS flow this inbound's clients need, or "" when it takes none.
+
+        VLESS over Reality (or TLS) on raw TCP is the one combination that
+        wants xtls-rprx-vision; setting it anywhere else breaks the client.
+        """
+        if self._flow is None:
+            self._flow = ""
+            try:
+                inbound = self.get_inbound(inbound_id)
+                stream = inbound.get("streamSettings")
+                stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+                network = stream.get("network", "tcp")
+                security = stream.get("security", "")
+                if (inbound.get("protocol") == "vless"
+                        and network in ("tcp", "raw")
+                        and security in ("reality", "tls")):
+                    self._flow = "xtls-rprx-vision"
+            except (XUIError, ValueError):
+                pass
+        return self._flow
 
     def _settings(self) -> dict:
         if self._panel_settings is None:
