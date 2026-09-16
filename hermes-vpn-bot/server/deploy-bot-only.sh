@@ -689,6 +689,14 @@ from xui_client import XUIClient, XUIError
 router = Router()
 log = logging.getLogger(__name__)
 
+# Set once, when this module is first imported by a process — lets /whoami
+# prove whether a reply came from the process just restarted or a stale one
+# still polling Telegram alongside it (two processes sharing one bot token
+# behave exactly like a bot that "sometimes doesn't answer": Telegram hands
+# each update to whichever one asks first, so replies look random).
+_LOADED_AT = time.time()
+_PID = os.getpid()
+
 
 @router.error()
 async def report_crashes(event):
@@ -714,6 +722,7 @@ HELP = (
     "/testtunnel — تست اتصال واقعی از سرور (بدون نیاز به گوشی)\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
     "/update — دریافت آخرین نسخه‌ی کد و ری‌استارت\n"
+    "/whoami — کدام پردازش دارد جواب می‌دهد (تشخیص پردازش‌های تکراری)\n"
     "/ops — همین راهنما"
 )
 
@@ -730,6 +739,39 @@ def _size(n: int) -> str:
 async def ops_help(message: Message):
     if _admin(message):
         await message.answer(HELP)
+
+
+@router.message(Command("whoami"))
+async def whoami(message: Message):
+    """Which process actually answered — the one thing needed to catch a
+    stray duplicate bot process still running outside systemd."""
+    if not _admin(message):
+        return
+    import subprocess
+
+    age = time.time() - _LOADED_AT
+    lines = [f"PID: {_PID}", f"این پردازش {age:.0f} ثانیه پیش بالا آمده", f"تعداد فایل در /update: {len(FILES)}"]
+    try:
+        out = subprocess.run(["pgrep", "-af", "bot/main.py"], capture_output=True, text=True, timeout=5).stdout
+        # pgrep -f matches the whole command line, so a shell wrapper that
+        # merely mentions this path (like the one running this very check)
+        # matches too; keep only lines whose command actually is a python
+        # interpreter, not something that just quotes the path in passing.
+        def _is_python_proc(line: str) -> bool:
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                return False
+            argv0 = parts[1].split()[0] if parts[1].split() else ""
+            return "python" in os.path.basename(argv0)
+
+        procs = [l for l in out.splitlines() if l.strip() and _is_python_proc(l)]
+        lines.append(f"\nهمه‌ی پردازش‌های main.py روی این سرور ({len(procs)}):")
+        lines += [f"  {p}" for p in procs] or ["  (هیچ‌کدام با pgrep پیدا نشد)"]
+        if len(procs) > 1:
+            lines.append("\n⚠️ بیش از یک پردازش در حال اجراست — همین باعث جواب‌های نامنظم می‌شود.")
+    except Exception as e:
+        lines.append(f"\n(بررسی پردازش‌ها ممکن نشد: {e})")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("diag"))
