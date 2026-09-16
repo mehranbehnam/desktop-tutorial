@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 
 import config
 import db
-from handlers import admin, buy, renew, start, status, trial
+from handlers import admin, buy, ops, renew, start, status, trial
 
 
 async def main():
@@ -27,6 +27,7 @@ async def main():
     dp.include_router(trial.router)
     dp.include_router(status.router)
     dp.include_router(admin.router)
+    dp.include_router(ops.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)

@@ -40,6 +40,7 @@ mkdir -p "$APP/bot/handlers" "$APP/bot/utils" "$APP/server"
 FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/xui_client.py bot/requirements.txt
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
+bot/handlers/ops.py
 bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py server/test_client.py"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
@@ -123,7 +124,7 @@ IMPORTS=$("$PY" -c "
 import sys; sys.path.insert(0,'bot')
 try:
     import config, db, xui_client
-    from handlers import trial, buy, status, start, renew, admin
+    from handlers import trial, buy, status, start, renew, admin, ops
     print('OK')
 except Exception:
     import traceback; traceback.print_exc()
