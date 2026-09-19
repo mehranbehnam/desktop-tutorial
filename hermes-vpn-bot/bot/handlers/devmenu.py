@@ -147,8 +147,9 @@ MENU_SECURITY = ReplyKeyboardMarkup(
 
 MENU_MAINTENANCE = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔎 بررسی کامل"), KeyboardButton(text="🖥 وضعیت کامل سیستم")],
-        [KeyboardButton(text="💻 وضعیت سرور"), KeyboardButton(text="📡 پینگ سرور ایران")],
+        [KeyboardButton(text="🔎 بررسی کامل"), KeyboardButton(text="🔬 کانفیگ زنده Xray")],
+        [KeyboardButton(text="🖥 وضعیت کامل سیستم"), KeyboardButton(text="💻 وضعیت سرور")],
+        [KeyboardButton(text="📡 پینگ سرور ایران")],
         [KeyboardButton(text="📄 خطاهای اخیر"), KeyboardButton(text="🔎 بررسی یکپارچگی دیتابیس")],
         [KeyboardButton(text="💾 بکاپ دیتابیس"), KeyboardButton(text="🧪 تست تونل")],
         [KeyboardButton(text="♻️ ری‌استارت ربات فروش"), KeyboardButton(text="♻️ ری‌استارت ربات مدیریت (خودم)")],
@@ -286,6 +287,11 @@ async def back_to_menu(message: Message):
 @router.message(F.text == "🔎 بررسی کامل")
 async def btn_diag(message: Message):
     await ops.diag(message)
+
+
+@router.message(F.text == "🔬 کانفیگ زنده Xray")
+async def btn_live_config(message: Message):
+    await ops.live_config(message)
 
 
 @router.message(F.text == "👥 کلاینت‌ها")

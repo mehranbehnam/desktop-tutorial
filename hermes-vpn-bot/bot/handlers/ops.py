@@ -47,6 +47,7 @@ async def report_crashes(event):
 HELP = (
     "🛠 دستورهای مدیریت:\n\n"
     "/diag — بررسی کامل سرور و پنل\n"
+    "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
     "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
@@ -177,6 +178,62 @@ async def diag(message: Message):
         lines.append(f"⚠️ لاگ Xray: {e}")
 
     await message.answer("🔎 نتیجه بررسی:\n\n" + "\n".join(lines))
+
+
+@router.message(Command("liveconfig"))
+async def live_config(message: Message):
+    """What Xray is *actually* running, straight from getConfigJson — not
+    what the panel's inbound record claims. /diag only checks that the
+    panel's own stored keypair is self-consistent; it can't tell you
+    whether the panel ever actually pushed that config into the running
+    Xray process. When every client fails identically regardless of
+    domain, key freshness, or a plain restart, that gap is the remaining
+    suspect.
+    """
+    if not _admin(message):
+        return
+    x = XUIClient()
+    try:
+        cfg = x._request("GET", "/panel/api/server/getConfigJson")
+    except XUIError as e:
+        await message.answer(f"❌ خطا در گرفتن کانفیگ زنده: {e}")
+        return
+
+    try:
+        want_port = x.get_inbound().get("port")
+    except (XUIError, ValueError):
+        want_port = None
+
+    inbounds = (cfg or {}).get("inbounds") or []
+    lines = [f"تعداد inbound در کانفیگ زنده‌ی Xray: {len(inbounds)}"]
+    matched = False
+    for ib in inbounds:
+        port = ib.get("port")
+        if want_port and port != want_port:
+            continue
+        matched = True
+        stream = ib.get("streamSettings") or {}
+        reality = stream.get("realitySettings") or {}
+        priv = reality.get("privateKey", "")
+        dest = reality.get("dest", "")
+        short_ids = reality.get("shortIds", [])
+        settings = ib.get("settings") or {}
+        clients = settings.get("clients") or []
+        lines.append(f"پورت {port}: dest={dest}")
+        lines.append(f"   shortIds در کانفیگ زنده: {short_ids}")
+        lines.append(f"   تعداد کلاینت در کانفیگ زنده: {len(clients)}")
+        if priv:
+            try:
+                derived = public_from_private(priv)
+                lines.append(f"   کلید عمومی مشتق‌شده از کلید *زنده*: {derived}")
+            except ValueError as e:
+                lines.append(f"   خطای مشتق کردن کلید: {e}")
+        else:
+            lines.append("   کلید خصوصی در کانفیگ زنده خالیه")
+    if not matched:
+        lines.append(f"⚠️ هیچ inbound-ی با پورت {want_port} تو کانفیگ زنده پیدا نشد.")
+
+    await message.answer("🔬 کانفیگ زنده‌ی Xray (از getConfigJson):\n\n" + "\n".join(lines))
 
 
 @router.message(Command("clients"))
