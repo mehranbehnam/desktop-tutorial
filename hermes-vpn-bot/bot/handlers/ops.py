@@ -343,10 +343,14 @@ async def update(message: Message):
     await message.answer("⏳ در حال دریافت آخرین نسخه…")
 
     staged, errors = {}, []
+    # raw.githubusercontent.com sits behind a CDN that caches for a few
+    # minutes — without a cache-busting query param, /update right after a
+    # push can silently re-deploy the previous version.
+    cachebust = int(time.time())
     with tempfile.TemporaryDirectory() as tmp:
         for rel in FILES:
             try:
-                with urllib.request.urlopen(f"{RAW}/{rel}", timeout=30) as resp:
+                with urllib.request.urlopen(f"{RAW}/{rel}?cb={cachebust}", timeout=30) as resp:
                     data = resp.read()
             except Exception as e:
                 errors.append(f"{rel}: {type(e).__name__}")

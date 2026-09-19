@@ -42,10 +42,13 @@ bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
 bot/handlers/ops.py bot/handlers/devmenu.py
 bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py server/test_client.py"
+CACHEBUST="cb=$(date +%s)"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
-  # rather than the downloaded size.
-  if curl -fsSL --max-time 30 "$RAW/$f" -o "$APP/$f.new"; then
+  # rather than the downloaded size. raw.githubusercontent.com sits behind
+  # a CDN that caches for a few minutes — a cache-busting query param is
+  # the difference between "just pushed" actually meaning "just deployed".
+  if curl -fsSL --max-time 30 "$RAW/$f?$CACHEBUST" -o "$APP/$f.new"; then
     mv "$APP/$f.new" "$APP/$f"
   else
     rm -f "$APP/$f.new"
