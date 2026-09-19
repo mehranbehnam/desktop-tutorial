@@ -468,10 +468,25 @@ async def _apply_new_port(message: Message, port_text: str):
         }
         x._request("POST", f"/panel/api/inbounds/update/{inbound['id']}", json=body)
         x._request("POST", "/panel/api/server/restartXrayService")
-        await message.answer(
-            f"✅ پورت اینباند به {new_port} تغییر کرد و Xray ری‌استارت شد.\n"
-            "حالا یه کلاینت جدید بساز (🆕 کلاینت جدید) تا لینک با پورت جدید بگیری."
-        )
+        msg = (f"✅ پورت اینباند به {new_port} تغییر کرد و Xray ری‌استارت شد.\n"
+              "حالا یه کلاینت جدید بساز (🆕 کلاینت جدید) تا لینک با پورت جدید بگیری.")
+
+        # A port that's open in Xray but not in the server's own firewall
+        # fails silently (packets just get dropped) — this is exactly what
+        # bit us moving to 8443 the first time. Auto-opening it here means
+        # that specific mistake can't repeat.
+        if iran_ssh.configured():
+            try:
+                out, _ = iran_ssh.run(f"sudo ufw allow {new_port}/tcp && echo UFW_OK")
+                if "UFW_OK" in out:
+                    msg += f"\n✅ پورت {new_port}/tcp تو فایروال (ufw) سرور ایران هم باز شد."
+                else:
+                    msg += f"\n⚠️ باز کردن پورت تو ufw نامشخص موند:\n{out}"
+            except iran_ssh.IranSSHError as e:
+                msg += f"\n⚠️ نتونستم فایروال ایران رو خودکار باز کنم ({e}) — با 🧱 وضعیت فایروال سرور ایران چک کن."
+        else:
+            msg += "\n⚠️ SSH سرور ایران تنظیم نیست — اگه پورت جدید تو فایروال بسته باشه، دستی باز کن."
+        await message.answer(msg)
     except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
 
