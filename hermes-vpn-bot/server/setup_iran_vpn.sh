@@ -49,11 +49,23 @@ bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
 bot/handlers/ops.py bot/handlers/devmenu.py
 bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py bot/utils/cloudflare.py server/test_client.py"
+
+# Unauthenticated Contents API requests are capped at 60/hour — easy to
+# blow through during a debugging session with several runs in a row. Any
+# GitHub token (no special scopes needed, this is a public repo) raises
+# that to 5000/hour. Picked up from the env var if passed on the command
+# line, otherwise from whatever's already saved in .env from a past run.
+if [ -z "${GITHUB_TOKEN:-}" ] && [ -f "$APP/bot/.env" ]; then
+  GITHUB_TOKEN=$(grep -E '^GITHUB_TOKEN=' "$APP/bot/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+fi
+AUTH_HEADER=()
+[ -n "${GITHUB_TOKEN:-}" ] && AUTH_HEADER=(-H "Authorization: Bearer $GITHUB_TOKEN")
+
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
   # rather than the downloaded size.
   if curl -fsSL --max-time 30 -H "Accept: application/vnd.github.raw" -H "User-Agent: irannewvpn-setup" \
-       "$API_REPO/$f?ref=$API_REF" -o "$APP/$f.new"; then
+       "${AUTH_HEADER[@]}" "$API_REPO/$f?ref=$API_REF" -o "$APP/$f.new"; then
     mv "$APP/$f.new" "$APP/$f"
   else
     rm -f "$APP/$f.new"
@@ -98,6 +110,7 @@ set_env XUI_INBOUND_ID "$XUI_INBOUND_ID"
 set_env TRIAL_MB "${TRIAL_MB:-200}"
 set_env TRIAL_HOURS "${TRIAL_HOURS:-1}"
 set_env DEV_BOT_TOKEN "$DEV_BOT_TOKEN"
+set_env GITHUB_TOKEN "${GITHUB_TOKEN:-}"
 
 get_env() { grep -E "^$1=" "$ENV" 2>/dev/null | head -1 | cut -d= -f2-; }
 BASE=$(get_env XUI_BASE_URL); PUSER=$(get_env XUI_USERNAME); PPASS=$(get_env XUI_PASSWORD)

@@ -406,6 +406,7 @@ async def update(message: Message):
     import shutil
     import subprocess
     import tempfile
+    import urllib.error
     import urllib.request
 
     bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -413,15 +414,21 @@ async def update(message: Message):
     await message.answer("⏳ در حال دریافت آخرین نسخه…")
 
     staged, errors = {}, []
+    headers = {"Accept": "application/vnd.github.raw", "User-Agent": "irannewvpn-bot-update"}
+    if config.GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
     with tempfile.TemporaryDirectory() as tmp:
         for rel in FILES:
-            req = urllib.request.Request(
-                f"{API_REPO}/{rel}?ref={API_REF}",
-                headers={"Accept": "application/vnd.github.raw", "User-Agent": "irannewvpn-bot-update"},
-            )
+            req = urllib.request.Request(f"{API_REPO}/{rel}?ref={API_REF}", headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     data = resp.read()
+            except urllib.error.HTTPError as e:
+                detail = f"HTTP {e.code}"
+                if e.code == 403 and "rate limit" in e.read().decode(errors="replace").lower():
+                    detail += " (rate limit — بدون GITHUB_TOKEN فقط ۶۰ درخواست/ساعت مجازه)"
+                errors.append(f"{rel}: {detail}")
+                continue
             except Exception as e:
                 errors.append(f"{rel}: {type(e).__name__}")
                 continue

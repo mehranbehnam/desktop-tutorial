@@ -50,6 +50,13 @@ IRAN_SSH_PASSWORD = os.getenv("IRAN_SSH_PASSWORD", "")
 # bot, never hand-typed into this repo.
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
 
+# Optional. /update and setup_iran_vpn.sh read source files from GitHub's
+# Contents API, which rate-limits unauthenticated requests to 60/hour — easy
+# to hit during a debugging session with several updates in a row. Any
+# GitHub personal access token (no special scopes needed for a public repo)
+# raises that to 5000/hour.
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
 TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
 TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
