@@ -639,10 +639,14 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
         return
     await message.answer(f"✅ اینباند آماده شد (id={new_id}, پورت 2053, مسیر {ws_path}).")
 
+    # Unique every run — re-running this for the same subdomain (e.g. to
+    # pick up a config fix) would otherwise collide with the previous
+    # run's still-existing test client and fail outright.
+    test_email = f"wstest-{subdomain}-{int(time.time())}"
     try:
         x._request("POST", "/panel/api/server/restartXrayService")
-        client = x.add_client(email=f"wstest-{subdomain}", days=1, inbound_id=new_id)
-        link = x.build_vless_link(client["uuid"], f"wstest-{subdomain}")
+        client = x.add_client(email=test_email, days=1, inbound_id=new_id)
+        link = x.build_vless_link(client["uuid"], test_email)
     except XUIError as e:
         await message.answer(f"⚠️ اینباند ساخته شد ولی ساخت کلاینت تست ناموفق بود: {e}")
         return
