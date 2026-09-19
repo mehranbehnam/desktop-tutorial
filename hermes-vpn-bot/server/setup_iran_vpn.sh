@@ -173,10 +173,15 @@ try:
 except Exception as e:
     raise SystemExit(f"     could not parse inbound list: {e}")
 for i in data.get('obj') or []:
-    stream = i.get('streamSettings') or '{}'
-    sec = json.loads(stream).get('security', '?') if stream.startswith('{') else '?'
+    # Newer panel builds return streamSettings/settings already parsed;
+    # older ones return them as JSON strings — handle both.
+    stream = i.get('streamSettings') or {}
+    stream = json.loads(stream) if isinstance(stream, str) else stream
+    sec = stream.get('security', '?')
+    settings = i.get('settings') or {}
+    settings = json.loads(settings) if isinstance(settings, str) else settings
     print(f"     inbound id={i.get('id')} port={i.get('port')} proto={i.get('protocol')} "
-          f"security={sec} enabled={i.get('enable')} clients={len(json.loads(i.get('settings') or '{}').get('clients', []))}")
+          f"security={sec} enabled={i.get('enable')} clients={len(settings.get('clients', []))}")
 PYEOF
 else
   bad "inbound list -> HTTP $LIST"
