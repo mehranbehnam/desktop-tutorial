@@ -99,40 +99,100 @@ def _list_clients(x: XUIClient) -> list[dict]:
     return settings.get("clients") or []
 
 
+# The menu is organized as top-level categories, each opening its own
+# button page — a flat 24-row wall of buttons was unusable on a phone.
+# Every action handler below is unchanged; only which keyboard is showing
+# when its button gets tapped changes, and Telegram sends the same plain
+# text regardless, so nothing about the handlers needed to change.
+
+CAT_CLIENTS = "👥 مدیریت کلاینت‌ها"
+CAT_SECURITY = "🔒 امنیت (Fail2ban)"
+CAT_MAINTENANCE = "🛠 نگهداری سرور"
+CAT_PANEL = "⚙️ تنظیمات پنل و SSH"
+CAT_FINANCE = "💰 مالی، آمار و کاربران"
+CAT_SALES = "🛍 فروش و تست (مثل ربات مشتری)"
+BACK = "🔙 بازگشت به منو اصلی"
+
 MENU = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🔎 بررسی کامل"), KeyboardButton(text="👥 کلاینت‌ها")],
+        [KeyboardButton(text=CAT_CLIENTS), KeyboardButton(text=CAT_SECURITY)],
+        [KeyboardButton(text=CAT_MAINTENANCE), KeyboardButton(text=CAT_PANEL)],
+        [KeyboardButton(text=CAT_FINANCE), KeyboardButton(text=CAT_SALES)],
+        [KeyboardButton(text="📖 راهنما")],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_CLIENTS = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="👥 کلاینت‌ها"), KeyboardButton(text="🆕 کلاینت جدید")],
+        [KeyboardButton(text="📦 ساخت انبوه"), KeyboardButton(text="🔍 وضعیت کلاینت")],
+        [KeyboardButton(text="⏳ تمدید کلاینت"), KeyboardButton(text="➕ افزایش حجم/زمان")],
+        [KeyboardButton(text="🔒 مسدود/فعال کلاینت"), KeyboardButton(text="🗑 حذف کلاینت")],
+        [KeyboardButton(text="🔄 تمدید انبوه"), KeyboardButton(text="🗑 حذف انبوه (منقضی‌شده‌ها)")],
         [KeyboardButton(text="🛠 اصلاح Flow"), KeyboardButton(text="🔑 اصلاح کلیدها")],
-        [KeyboardButton(text="🧪 تست تونل"), KeyboardButton(text="♻️ ری‌استارت Xray")],
-        [KeyboardButton(text="⬆️ آپدیت کد"), KeyboardButton(text="🆔 شناسایی پردازش")],
-        [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
-        [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
-        [KeyboardButton(text="🚫 لیست مسدودی‌های Fail2ban"), KeyboardButton(text="✅ رفع مسدودیت IP")],
-        [KeyboardButton(text="📡 پینگ سرور ایران"), KeyboardButton(text="🖥 وضعیت کامل سیستم")],
-        [KeyboardButton(text="💻 وضعیت سرور"), KeyboardButton(text="📄 خطاهای اخیر")],
-        [KeyboardButton(text="🔎 بررسی یکپارچگی دیتابیس"), KeyboardButton(text="💾 بکاپ دیتابیس")],
+        [KeyboardButton(text=BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_SECURITY = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🚫 لیست مسدودی‌های Fail2ban")],
+        [KeyboardButton(text="✅ رفع مسدودیت IP")],
+        [KeyboardButton(text=BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_MAINTENANCE = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔎 بررسی کامل"), KeyboardButton(text="🖥 وضعیت کامل سیستم")],
+        [KeyboardButton(text="💻 وضعیت سرور"), KeyboardButton(text="📡 پینگ سرور ایران")],
+        [KeyboardButton(text="📄 خطاهای اخیر"), KeyboardButton(text="🔎 بررسی یکپارچگی دیتابیس")],
+        [KeyboardButton(text="💾 بکاپ دیتابیس"), KeyboardButton(text="🧪 تست تونل")],
         [KeyboardButton(text="♻️ ری‌استارت ربات فروش"), KeyboardButton(text="♻️ ری‌استارت ربات مدیریت (خودم)")],
-        [KeyboardButton(text="♻️ ری‌استارت پنل X-UI (SSH)")],
+        [KeyboardButton(text="♻️ ری‌استارت Xray"), KeyboardButton(text="♻️ ری‌استارت پنل X-UI (SSH)")],
+        [KeyboardButton(text="⬆️ آپدیت کد"), KeyboardButton(text="🆔 شناسایی پردازش")],
+        [KeyboardButton(text=BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_PANEL = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
+        [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
+        [KeyboardButton(text=BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_FINANCE = ReplyKeyboardMarkup(
+    keyboard=[
         [KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="📊 گزارش مالی")],
         [KeyboardButton(text="🧾 سفارش‌های اخیر"), KeyboardButton(text="📢 پیام همگانی")],
-        [KeyboardButton(text="🆕 کلاینت جدید"), KeyboardButton(text="📦 ساخت انبوه")],
-        [KeyboardButton(text="🔍 وضعیت کلاینت"), KeyboardButton(text="➕ افزایش حجم/زمان")],
-        [KeyboardButton(text="⏳ تمدید کلاینت"), KeyboardButton(text="🔒 مسدود/فعال کلاینت")],
-        [KeyboardButton(text="🗑 حذف کلاینت"), KeyboardButton(text="🔄 تمدید انبوه")],
-        [KeyboardButton(text="🗑 حذف انبوه (منقضی‌شده‌ها)")],
+        [KeyboardButton(text=BACK)],
+    ],
+    resize_keyboard=True,
+)
+
+MENU_SALES = ReplyKeyboardMarkup(
+    keyboard=[
         [KeyboardButton(text="🛒 خرید سرویس"), KeyboardButton(text="📦 خرید عمده")],
         [KeyboardButton(text="🔄 تمدید سرویس"), KeyboardButton(text="🧪 تست")],
         [KeyboardButton(text="📶 وضعیت سرویس من"), KeyboardButton(text="♻️ دریافت دوباره لینک")],
         [KeyboardButton(text="🆘 پشتیبانی")],
-        [KeyboardButton(text="📖 راهنما")],
+        [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
 )
 
 HELP = (
     "🤖 ربات توسعه‌دهنده iranvpn — همه‌ی کارهای نگهداری و فروش از همین‌جا:\n\n"
-    "هر دکمه‌ی زیر معادل یک کار نگهداری یا فروش‌ه؛ نیازی به SSH یا پنل نیست، "
-    "مگر برای امکانات مربوط به fail2ban/ری‌استارت پنل که یک‌بار باید SSH سرور ایران رو تنظیم کنی.\n"
+    "یه دسته رو انتخاب کن تا دکمه‌های اون بخش باز بشه؛ هر وقت خواستی با 🔙 برگرد به منوی اصلی.\n"
+    "نیازی به SSH یا پنل نیست، مگر برای امکانات مربوط به fail2ban/ری‌استارت پنل که یک‌بار باید "
+    "SSH سرور ایران رو تنظیم کنی.\n"
     "برای لغو یک عملیات چندمرحله‌ای هر وقت خواستی /cancel بفرست."
 )
 
@@ -165,6 +225,58 @@ async def cancel(message: Message):
         return
     had = _pending.pop(message.from_user.id, None)
     await message.answer("لغو شد." if had else "چیزی برای لغو نبود.")
+
+
+# ---------------------------------------------------------------- category navigation
+
+@router.message(F.text == CAT_CLIENTS)
+async def cat_clients(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("👥 مدیریت کلاینت‌ها:", reply_markup=MENU_CLIENTS)
+
+
+@router.message(F.text == CAT_SECURITY)
+async def cat_security(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("🔒 امنیت — نیاز به 🔑 تنظیم SSH سرور ایران داره (تو ⚙️ تنظیمات پنل و SSH):",
+                         reply_markup=MENU_SECURITY)
+
+
+@router.message(F.text == CAT_MAINTENANCE)
+async def cat_maintenance(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("🛠 نگهداری سرور:", reply_markup=MENU_MAINTENANCE)
+
+
+@router.message(F.text == CAT_PANEL)
+async def cat_panel(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("⚙️ تنظیمات پنل و SSH:", reply_markup=MENU_PANEL)
+
+
+@router.message(F.text == CAT_FINANCE)
+async def cat_finance(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("💰 مالی، آمار و کاربران:", reply_markup=MENU_FINANCE)
+
+
+@router.message(F.text == CAT_SALES)
+async def cat_sales(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("🛍 فروش و تست — همون کاری که ربات مشتری می‌کنه:", reply_markup=MENU_SALES)
+
+
+@router.message(F.text == BACK)
+async def back_to_menu(message: Message):
+    if not _admin(message):
+        return
+    await message.answer("منوی اصلی:", reply_markup=MENU)
 
 
 # ---------------------------------------------------------------- existing
