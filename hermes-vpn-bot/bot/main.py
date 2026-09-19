@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, BotCommandScopeChat
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonCommands
 
 import config
 import db
@@ -20,6 +20,10 @@ COMMANDS_ADMIN_EXTRA = [
 
 
 async def _setup_commands(bot: Bot):
+    # Without this, the ☰ button next to the message box stays the plain
+    # keyboard-toggle icon — set_my_commands alone populates the list but
+    # doesn't change what that button looks like or does.
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     await bot.set_my_commands(COMMANDS_DEFAULT)
     for admin_id in config.ADMIN_IDS:
         try:

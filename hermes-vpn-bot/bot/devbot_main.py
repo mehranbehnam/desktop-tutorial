@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonCommands
 
 import config
 import db
@@ -38,6 +38,10 @@ async def main():
 
     bot = Bot(token=config.DEV_BOT_TOKEN)
     dp = Dispatcher()
+    # Without this, the ☰ button next to the message box stays the plain
+    # keyboard-toggle icon — set_my_commands alone populates the list but
+    # doesn't change what that button looks like or does.
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     await bot.set_my_commands(COMMANDS)
 
     # devmenu/ops first: their pending-action dispatchers only fire when an
