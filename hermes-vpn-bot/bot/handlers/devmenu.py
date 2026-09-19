@@ -164,6 +164,7 @@ MENU_PANEL = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
         [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
+        [KeyboardButton(text="🔀 تغییر پورت اینباند")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -417,6 +418,59 @@ async def toggle_inbound(message: Message):
         x._request("POST", f"/panel/api/inbounds/update/{inbound['id']}", json=body)
         state_fa = "فعال" if new_state else "غیرفعال"
         await message.answer(f"✅ اینباند {state_fa} شد.")
+    except (XUIError, ValueError) as e:
+        await message.answer(f"❌ ناموفق: {e}")
+
+
+@router.message(F.text == "🔀 تغییر پورت اینباند")
+async def ask_new_port(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "change_port"}
+    await message.answer(
+        "پورت جدید اینباند رو بفرست (عددی بین ۱ تا ۶۵۵۳۵، غیر از ۴۴۳ و پورت پنل).\n"
+        "این کار برای دور زدن احتمالی محافظت Anti-DDoS/WAF ArvanCloud روی پورت ۴۴۳ "
+        "کاربرد داره. بعدش یادت نره یه کلاینت جدید بسازی تا لینک با پورت جدید بگیری — "
+        "و شاید لازم بشه پورت جدید رو تو فایروال/Anti-DDoS خود ArvanCloud هم باز کنی.\n\n"
+        "/cancel برای لغو."
+    )
+
+
+async def _apply_new_port(message: Message, port_text: str):
+    try:
+        new_port = int(port_text.strip())
+    except ValueError:
+        await message.answer("عدد نامعتبر. دوباره از 🔀 تغییر پورت اینباند شروع کن.")
+        return
+    if not (1 <= new_port <= 65535):
+        await message.answer("پورت باید بین ۱ تا ۶۵۵۳۵ باشه.")
+        return
+
+    x = XUIClient()
+    try:
+        inbound = x.get_inbound()
+        stream = inbound.get("streamSettings")
+        stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+        body = {
+            "enable": inbound.get("enable", True),
+            "remark": inbound.get("remark", ""),
+            "listen": inbound.get("listen", ""),
+            "port": new_port,
+            "protocol": inbound.get("protocol"),
+            "expiryTime": inbound.get("expiryTime", 0),
+            "total": inbound.get("total", 0),
+            "settings": json.loads(inbound["settings"]) if isinstance(inbound.get("settings"), str)
+            else inbound.get("settings", {}),
+            "streamSettings": stream,
+            "sniffing": json.loads(inbound["sniffing"]) if isinstance(inbound.get("sniffing"), str)
+            else inbound.get("sniffing", {}),
+        }
+        x._request("POST", f"/panel/api/inbounds/update/{inbound['id']}", json=body)
+        x._request("POST", "/panel/api/server/restartXrayService")
+        await message.answer(
+            f"✅ پورت اینباند به {new_port} تغییر کرد و Xray ری‌استارت شد.\n"
+            "حالا یه کلاینت جدید بساز (🆕 کلاینت جدید) تا لینک با پورت جدید بگیری."
+        )
     except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
 
@@ -1312,6 +1366,8 @@ async def handle_pending(message: Message):
     _pending.pop(message.from_user.id, None)
     if action == "change_dest":
         await _apply_new_dest(message, text)
+    elif action == "change_port":
+        await _apply_new_port(message, text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
     elif action == "delete_client":
