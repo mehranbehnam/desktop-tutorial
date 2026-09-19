@@ -1,7 +1,7 @@
 import logging
 
 from aiogram import Bot, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config
@@ -25,6 +25,12 @@ async def cmd_start(message: Message):
         "از منوی پایین یکی از گزینه‌ها رو انتخاب کن:",
         reply_markup=MAIN_MENU,
     )
+
+
+@router.message(Command("stop"))
+async def stop(message: Message):
+    _awaiting_support.pop(message.from_user.id, None)
+    await message.answer("باشه، لغو شد.", reply_markup=MAIN_MENU)
 
 
 @router.message(lambda m: m.text == "🆘 پشتیبانی")

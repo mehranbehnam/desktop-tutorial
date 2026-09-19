@@ -219,12 +219,12 @@ async def show_menu(message: Message):
     await message.answer(HELP, reply_markup=MENU)
 
 
-@router.message(Command("cancel"))
+@router.message(Command("cancel", "stop"))
 async def cancel(message: Message):
     if not _admin(message):
         return
     had = _pending.pop(message.from_user.id, None)
-    await message.answer("لغو شد." if had else "چیزی برای لغو نبود.")
+    await message.answer("لغو شد." if had else "چیزی برای لغو نبود.", reply_markup=MENU)
 
 
 # ---------------------------------------------------------------- category navigation

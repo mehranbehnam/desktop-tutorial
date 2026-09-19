@@ -2,10 +2,28 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 
 import config
 import db
 from handlers import admin, buy, devmenu, ops, renew, start, status, trial
+
+# Shown via the ☰ menu button next to the message box — the most-used
+# commands, so the whole admin toolkit is one tap away even without the
+# reply-keyboard menu on screen.
+COMMANDS = [
+    BotCommand(command="start", description="نمایش منوی اصلی"),
+    BotCommand(command="menu", description="نمایش منوی اصلی"),
+    BotCommand(command="cancel", description="لغو عملیات در حال انجام"),
+    BotCommand(command="stop", description="لغو عملیات در حال انجام"),
+    BotCommand(command="diag", description="بررسی کامل سرور و پنل"),
+    BotCommand(command="clients", description="فهرست کلاینت‌ها"),
+    BotCommand(command="testtunnel", description="تست اتصال واقعی به VPN"),
+    BotCommand(command="restartxray", description="ری‌استارت Xray"),
+    BotCommand(command="update", description="دریافت آخرین نسخه‌ی کد"),
+    BotCommand(command="whoami", description="شناسایی پردازش در حال اجرا"),
+    BotCommand(command="ops", description="راهنمای کامل دستورها"),
+]
 
 
 async def main():
@@ -20,6 +38,7 @@ async def main():
 
     bot = Bot(token=config.DEV_BOT_TOKEN)
     dp = Dispatcher()
+    await bot.set_my_commands(COMMANDS)
 
     # devmenu/ops first: their pending-action dispatchers only fire when an
     # admin has an open multi-step flow, so they never shadow the sales
