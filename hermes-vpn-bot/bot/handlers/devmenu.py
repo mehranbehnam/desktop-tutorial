@@ -140,6 +140,7 @@ MENU_SECURITY = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🚫 لیست مسدودی‌های Fail2ban")],
         [KeyboardButton(text="✅ رفع مسدودیت IP")],
+        [KeyboardButton(text="🧱 وضعیت فایروال سرور ایران")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -679,6 +680,33 @@ async def fail2ban_list(message: Message):
                 banned = line.split(":", 1)[-1].strip()
         lines.append(f"• {jail}: {banned or '(خالی)'}")
     await message.answer("🚫 مسدودی‌های فعلی:\n\n" + "\n".join(lines))
+
+
+@router.message(F.text == "🧱 وضعیت فایروال سرور ایران")
+async def iran_firewall_status(message: Message):
+    """OS-level firewall on the Iran server itself — ufw/iptables, checked
+    directly over SSH. This is the one thing the X-UI panel's API can never
+    see: a port can be perfectly configured in Xray and still be silently
+    dropped by the server's own firewall before ever reaching it."""
+    if not _admin(message):
+        return
+    try:
+        x = XUIClient()
+        port = x.get_inbound().get("port", 443)
+    except (XUIError, ValueError):
+        port = 443
+    try:
+        out, _ = iran_ssh.run(
+            "echo '--- ufw status ---'; sudo ufw status verbose 2>&1; "
+            "echo '--- iptables (INPUT chain) ---'; sudo iptables -L INPUT -n --line-numbers 2>&1; "
+            f"echo '--- listening on port {port}? ---'; sudo ss -ltnp 2>&1 | grep -E \":{port}\\b\" || echo '(چیزی روی این پورت گوش نمی‌ده!)'; "
+            "echo '--- listening on port 443? ---'; sudo ss -ltnp 2>&1 | grep -E ':443\\b' || echo '(چیزی روی 443 گوش نمی‌ده)'"
+        )
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    await message.answer(f"🧱 فایروال و پورت‌های در حال گوش‌دادن (سرور ایران):\n\n<pre>{out[-3500:]}</pre>",
+                         parse_mode="HTML")
 
 
 @router.message(F.text == "✅ رفع مسدودیت IP")
