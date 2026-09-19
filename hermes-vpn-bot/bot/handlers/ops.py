@@ -206,6 +206,11 @@ async def live_config(message: Message):
 
     inbounds = (cfg or {}).get("inbounds") or []
     lines = [f"تعداد inbound در کانفیگ زنده‌ی Xray: {len(inbounds)}"]
+    for ib in inbounds:
+        sec = ((ib.get("streamSettings") or {}).get("security")) or "-"
+        lines.append(f"   • tag={ib.get('tag')} port={ib.get('port')} "
+                     f"listen={ib.get('listen') or '(همه)'} protocol={ib.get('protocol')} security={sec}")
+
     matched = False
     for ib in inbounds:
         port = ib.get("port")
