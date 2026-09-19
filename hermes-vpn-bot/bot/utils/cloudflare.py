@@ -46,6 +46,15 @@ def get_zone_id(domain: str) -> str:
     return result[0]["id"]
 
 
+def set_ssl_mode(zone_id: str, mode: str = "full") -> dict:
+    """"flexible" (Cloudflare's usual default for a freshly added zone)
+    talks plain HTTP to the origin — which a TLS-only listener like our
+    Xray inbound can't answer at all, so the edge connects, the client
+    sees "Connected", and no bytes ever move. "full" (or "strict") is
+    required for anything actually terminating TLS at the origin."""
+    return _call("PATCH", f"/zones/{zone_id}/settings/ssl", json={"value": mode})
+
+
 def create_or_update_dns_record(zone_id: str, hostname: str, ip: str, proxied: bool = True) -> dict:
     """Create an A record, or update it in place if one already exists."""
     existing = _call("GET", f"/zones/{zone_id}/dns_records", params={"name": hostname, "type": "A"})

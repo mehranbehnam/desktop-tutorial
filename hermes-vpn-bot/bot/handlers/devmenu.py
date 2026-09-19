@@ -569,10 +569,15 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
     try:
         zone_id = cloudflare.get_zone_id(domain)
         cloudflare.create_or_update_dns_record(zone_id, hostname, origin_ip)
+        cloudflare.set_ssl_mode(zone_id, "full")
     except cloudflare.CloudflareError as e:
         await message.answer(f"❌ ساخت رکورد DNS ناموفق: {e}")
         return
-    await message.answer(f"✅ DNS: {hostname} → سرور ایران (پشت Cloudflare، پروکسی‌شده)")
+    await message.answer(
+        f"✅ DNS: {hostname} → سرور ایران (پشت Cloudflare، پروکسی‌شده)\n"
+        "✅ حالت SSL/TLS رو ست کردم Full (نه Flexible) — وگرنه Cloudflare با HTTP ساده "
+        "به سرور وصل می‌شد و Xray (که فقط TLS می‌فهمه) جوابی نمی‌داد."
+    )
 
     try:
         key_pem, csr_pem = cloudflare.generate_key_and_csr(hostname)
