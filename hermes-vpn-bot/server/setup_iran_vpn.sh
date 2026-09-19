@@ -12,7 +12,14 @@
 #   XUI_USERNAME=... XUI_PASSWORD=... XUI_PUBLIC_HOST=IP \
 #   bash setup_iran_vpn.sh
 
-RAW=https://raw.githubusercontent.com/mehranbehnam/desktop-tutorial/refs/heads/claude/iran-vpn-turkey-d2hbvg/hermes-vpn-bot
+# The Contents API, not raw.githubusercontent.com: the raw CDN cached a
+# stale file for far longer than a query-string cache-buster could reliably
+# defeat (confirmed directly — a fix one commit behind another, in the same
+# file, downloaded correctly while the very next one silently didn't). The
+# API isn't behind that CDN, at the cost of GitHub's unauthenticated rate
+# limit (60/hour) — fine for how often this script actually runs.
+API_REPO=https://api.github.com/repos/mehranbehnam/desktop-tutorial/contents/hermes-vpn-bot
+API_REF=claude/iran-vpn-turkey-d2hbvg
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 FAILED=0
 FAILLOG=""
@@ -41,14 +48,12 @@ FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/devbot_main.py b
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
 bot/handlers/ops.py bot/handlers/devmenu.py
-bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py server/test_client.py"
-CACHEBUST="cb=$(date +%s)"
+bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py bot/utils/cloudflare.py server/test_client.py"
 for f in $FILES; do
   # __init__.py files are legitimately empty, so trust curl's exit status
-  # rather than the downloaded size. raw.githubusercontent.com sits behind
-  # a CDN that caches for a few minutes — a cache-busting query param is
-  # the difference between "just pushed" actually meaning "just deployed".
-  if curl -fsSL --max-time 30 "$RAW/$f?$CACHEBUST" -o "$APP/$f.new"; then
+  # rather than the downloaded size.
+  if curl -fsSL --max-time 30 -H "Accept: application/vnd.github.raw" -H "User-Agent: irannewvpn-setup" \
+       "$API_REPO/$f?ref=$API_REF" -o "$APP/$f.new"; then
     mv "$APP/$f.new" "$APP/$f"
   else
     rm -f "$APP/$f.new"

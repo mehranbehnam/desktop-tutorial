@@ -371,8 +371,15 @@ async def fixkeys(message: Message):
         await message.answer(f"❌ ناموفق: {e}")
 
 
-RAW = ("https://raw.githubusercontent.com/mehranbehnam/desktop-tutorial/"
-       "refs/heads/claude/iran-vpn-turkey-d2hbvg/hermes-vpn-bot")
+# raw.githubusercontent.com sits behind a CDN that turned out to cache
+# stale content for much longer than a query-string cache-buster could
+# reliably defeat (confirmed: a fix one commit behind another, in the same
+# file, downloaded correctly while the newer one silently didn't). The
+# Contents API isn't behind that CDN at all — this pays for that certainty
+# with GitHub's unauthenticated rate limit (60/hour), which is fine for how
+# often /update actually runs.
+API_REPO = "https://api.github.com/repos/mehranbehnam/desktop-tutorial/contents/hermes-vpn-bot"
+API_REF = "claude/iran-vpn-turkey-d2hbvg"
 FILES = [
     "bot/config.py", "bot/db.py", "bot/keyboards.py", "bot/main.py", "bot/devbot_main.py",
     "bot/xui_client.py",
@@ -406,14 +413,14 @@ async def update(message: Message):
     await message.answer("⏳ در حال دریافت آخرین نسخه…")
 
     staged, errors = {}, []
-    # raw.githubusercontent.com sits behind a CDN that caches for a few
-    # minutes — without a cache-busting query param, /update right after a
-    # push can silently re-deploy the previous version.
-    cachebust = int(time.time())
     with tempfile.TemporaryDirectory() as tmp:
         for rel in FILES:
+            req = urllib.request.Request(
+                f"{API_REPO}/{rel}?ref={API_REF}",
+                headers={"Accept": "application/vnd.github.raw", "User-Agent": "irannewvpn-bot-update"},
+            )
             try:
-                with urllib.request.urlopen(f"{RAW}/{rel}?cb={cachebust}", timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     data = resp.read()
             except Exception as e:
                 errors.append(f"{rel}: {type(e).__name__}")
