@@ -8,21 +8,16 @@ import config
 import db
 from handlers import admin, buy, devmenu, ops, renew, start, status, trial
 
-# Shown via the ☰ menu button next to the message box — the most-used
-# commands, so the whole admin toolkit is one tap away even without the
-# reply-keyboard menu on screen.
+# Shown via the ☰ menu button next to the message box — kept to just the
+# basics (start/menu/cancel/stop). Everything else lives on the
+# reply-keyboard category menu (devmenu.MENU) so the ☰ list doesn't
+# duplicate it; every one of those commands still works if typed by hand,
+# this only controls what's listed in the popup.
 COMMANDS = [
     BotCommand(command="start", description="نمایش منوی اصلی"),
     BotCommand(command="menu", description="نمایش منوی اصلی"),
     BotCommand(command="cancel", description="لغو عملیات در حال انجام"),
     BotCommand(command="stop", description="لغو عملیات در حال انجام"),
-    BotCommand(command="diag", description="بررسی کامل سرور و پنل"),
-    BotCommand(command="clients", description="فهرست کلاینت‌ها"),
-    BotCommand(command="testtunnel", description="تست اتصال واقعی به VPN"),
-    BotCommand(command="restartxray", description="ری‌استارت Xray"),
-    BotCommand(command="update", description="دریافت آخرین نسخه‌ی کد"),
-    BotCommand(command="whoami", description="شناسایی پردازش در حال اجرا"),
-    BotCommand(command="ops", description="راهنمای کامل دستورها"),
 ]
 
 
