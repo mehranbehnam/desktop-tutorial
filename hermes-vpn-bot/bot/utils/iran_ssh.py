@@ -48,3 +48,38 @@ def run(command: str, timeout: int = 20) -> tuple[str, str]:
         raise IranSSHError(f"{type(e).__name__}: {e}") from e
     finally:
         client.close()
+
+
+def write_file(remote_path: str, content: str, mode: int = 0o600):
+    """Write `content` to `remote_path` on the Iran server over SFTP.
+
+    Used for TLS cert/key material, where a shell heredoc would be one
+    stray character away from corrupting a PEM block — SFTP writes the
+    bytes directly, no shell quoting involved.
+    """
+    if paramiko is None:
+        raise IranSSHError("ماژول paramiko هنوز نصب نیست؛ یک بار /update بزن.")
+    if not configured():
+        raise IranSSHError("SSH سرور ایران تنظیم نشده — از دکمه‌ی 🔑 تنظیم SSH سرور ایران استفاده کن.")
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            config.IRAN_SSH_HOST, port=config.IRAN_SSH_PORT,
+            username=config.IRAN_SSH_USER, password=config.IRAN_SSH_PASSWORD,
+            timeout=20,
+        )
+        sftp = client.open_sftp()
+        try:
+            with sftp.open(remote_path, "w") as fh:
+                fh.write(content)
+            sftp.chmod(remote_path, mode)
+        finally:
+            sftp.close()
+    except paramiko.AuthenticationException as e:
+        raise IranSSHError(f"احراز هویت SSH ناموفق: {e}") from e
+    except Exception as e:
+        raise IranSSHError(f"{type(e).__name__}: {e}") from e
+    finally:
+        client.close()

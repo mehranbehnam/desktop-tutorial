@@ -3,3 +3,4 @@ requests>=2.31
 python-dotenv>=1.0
 qrcode[pil]>=7.4
 paramiko>=3.4
+cryptography>=41.0

@@ -381,6 +381,7 @@ FILES = [
     "bot/handlers/trial.py", "bot/handlers/ops.py", "bot/handlers/devmenu.py",
     "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
     "bot/utils/x25519.py", "bot/utils/tunnel_test.py", "bot/utils/iran_ssh.py",
+    "bot/utils/cloudflare.py",
     "bot/requirements.txt",
 ]
 

@@ -168,6 +168,7 @@ MENU_PANEL = ReplyKeyboardMarkup(
         [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
         [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
         [KeyboardButton(text="🔀 تغییر پورت اینباند"), KeyboardButton(text="☁️ تنظیم Cloudflare API")],
+        [KeyboardButton(text="🚀 راه‌اندازی WS+TLS با Cloudflare")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -531,6 +532,111 @@ async def _apply_cloudflare_token(message: Message, token: str):
     await message.answer("✅ توکن تایید شد و ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
     _, dev = _service_names()
     subprocess.Popen(["systemctl", "restart", dev])
+
+
+@router.message(F.text == "🚀 راه‌اندازی WS+TLS با Cloudflare")
+async def ask_ws_subdomain(message: Message):
+    if not _admin(message):
+        return
+    if not config.CLOUDFLARE_API_TOKEN:
+        await message.answer("اول باید ☁️ تنظیم Cloudflare API رو انجام بدی.")
+        return
+    if not iran_ssh.configured():
+        await message.answer("اول باید 🔑 تنظیم SSH سرور ایران رو انجام بدی (برای نوشتن گواهی روی سرور لازمه).")
+        return
+    _pending[message.from_user.id] = {"action": "ws_tls_setup"}
+    await message.answer(
+        "زیردامنه‌ی دلخواه (فقط حروف/عدد انگلیسی، بدون نقطه) رو بفرست — مثلاً اگه بخوای "
+        "cdn1.behrad.win بشه فقط بفرست:\n\ncdn1\n\n"
+        "این یه اینباند تازه‌ی VLESS+WebSocket+TLS پشت Cloudflare می‌سازه (کنار همون Reality "
+        "قبلی، بدون حذفش) و یه کلاینت تست هم می‌سازه. /cancel برای لغو."
+    )
+
+
+async def _do_ws_tls_setup(message: Message, subdomain: str):
+    subdomain = subdomain.strip().lower()
+    if not subdomain or not subdomain.isalnum():
+        await message.answer("زیردامنه نامعتبره — فقط حروف/عدد انگلیسی، بدون نقطه یا فاصله.")
+        return
+
+    from utils import cloudflare
+
+    domain = "behrad.win"
+    hostname = f"{subdomain}.{domain}"
+    origin_ip = config.XUI_PUBLIC_HOST or "85.198.48.9"
+    await message.answer(f"⏳ در حال راه‌اندازی {hostname}…")
+
+    try:
+        zone_id = cloudflare.get_zone_id(domain)
+        cloudflare.create_or_update_dns_record(zone_id, hostname, origin_ip)
+    except cloudflare.CloudflareError as e:
+        await message.answer(f"❌ ساخت رکورد DNS ناموفق: {e}")
+        return
+    await message.answer(f"✅ DNS: {hostname} → سرور ایران (پشت Cloudflare، پروکسی‌شده)")
+
+    try:
+        key_pem, csr_pem = cloudflare.generate_key_and_csr(hostname)
+        cert_result = cloudflare.request_origin_certificate([hostname], csr_pem)
+        cert_pem = cert_result["certificate"]
+    except cloudflare.CloudflareError as e:
+        await message.answer(f"❌ صدور گواهی TLS ناموفق: {e}")
+        return
+    await message.answer("✅ گواهی TLS از Cloudflare صادر شد.")
+
+    cert_path = f"/root/cert-{subdomain}.crt"
+    key_path = f"/root/cert-{subdomain}.key"
+    try:
+        iran_ssh.write_file(cert_path, cert_pem)
+        iran_ssh.write_file(key_path, key_pem)
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ نوشتن گواهی روی سرور ایران ناموفق: {e}")
+        return
+    await message.answer("✅ گواهی روی سرور ایران نوشته شد.")
+
+    ws_path = "/" + os.urandom(6).hex()
+    body = {
+        "enable": True,
+        "remark": f"ws-tls-{subdomain}",
+        "listen": "",
+        "port": 2053,  # one of Cloudflare's allowed proxied HTTPS ports
+        "protocol": "vless",
+        "expiryTime": 0,
+        "total": 0,
+        "settings": {"clients": [], "decryption": "none"},
+        "streamSettings": {
+            "network": "ws",
+            "security": "tls",
+            "wsSettings": {"path": ws_path, "headers": {}},
+            "tlsSettings": {
+                "serverName": hostname,
+                "certificates": [{"certificateFile": cert_path, "keyFile": key_path}],
+            },
+        },
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+    }
+    x = XUIClient()
+    try:
+        new_inbound = x._request("POST", "/panel/api/inbounds/add", json=body)
+        new_id = new_inbound["id"]
+    except (XUIError, KeyError, TypeError) as e:
+        await message.answer(f"❌ ساخت اینباند جدید ناموفق: {e}")
+        return
+    await message.answer(f"✅ اینباند جدید ساخته شد (id={new_id}, پورت 2053, مسیر {ws_path}).")
+
+    try:
+        x._request("POST", "/panel/api/server/restartXrayService")
+        client = x.add_client(email=f"wstest-{subdomain}", days=1, inbound_id=new_id)
+        link = x.build_vless_link(client["uuid"], f"wstest-{subdomain}")
+    except XUIError as e:
+        await message.answer(f"⚠️ اینباند ساخته شد ولی ساخت کلاینت تست ناموفق بود: {e}")
+        return
+
+    await message.answer(
+        f"🎉 آماده‌ست! لینک تست:\n\n<code>{link}</code>\n\n"
+        "این رو تو اپ گوشیت وارد کن و امتحان کن. اینباند Reality قبلی هم دست‌نخورده باقی موند "
+        "(id همون که قبلاً بود).",
+        parse_mode="HTML",
+    )
 
 
 # ---------------------------------------------------------------- new: repoint at a different panel
@@ -1480,6 +1586,8 @@ async def handle_pending(message: Message):
         await _apply_new_port(message, text)
     elif action == "cloudflare_token":
         await _apply_cloudflare_token(message, message.text)
+    elif action == "ws_tls_setup":
+        await _do_ws_tls_setup(message, text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
     elif action == "delete_client":
