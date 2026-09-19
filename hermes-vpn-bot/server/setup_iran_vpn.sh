@@ -233,7 +233,13 @@ RestartSec=3
 WantedBy=multi-user.target
 SERVICEEOF
   systemctl daemon-reload 2>&1
-  systemctl enable --now "$DEVSVC" 2>&1
+  # enable --now only starts a stopped unit — a no-op once it's already
+  # running, which is every run after the first. That silently left every
+  # code update since the first deploy never actually reaching this
+  # process. enable (no --now) + an unconditional restart fixes both the
+  # first-ever run and every one after it.
+  systemctl enable "$DEVSVC" 2>&1
+  systemctl restart "$DEVSVC" 2>&1
   sleep 3
   DEVSTATE=$(systemctl is-active "$DEVSVC" 2>&1)
   [ "$DEVSTATE" = "active" ] && ok "service $DEVSVC active" || bad "service $DEVSVC $DEVSTATE"

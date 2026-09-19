@@ -2263,7 +2263,11 @@ WantedBy=multi-user.target
 SERVICEEOF
 
 if [ -n "${DEV_BOT_TOKEN:-}" ]; then
-  systemctl enable --now hermes-vpn-bot-dev
+  # restart (not just enable --now), so a re-run against an existing
+  # install actually picks up new code instead of no-op'ing on an
+  # already-running service.
+  systemctl enable hermes-vpn-bot-dev
+  systemctl restart hermes-vpn-bot-dev
 else
   systemctl daemon-reload
   echo "  DEV_BOT_TOKEN not set — service installed but not started; set it in .env and 'systemctl enable --now hermes-vpn-bot-dev' when ready."
