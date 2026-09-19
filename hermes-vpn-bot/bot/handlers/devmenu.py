@@ -569,15 +569,25 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
     try:
         zone_id = cloudflare.get_zone_id(domain)
         cloudflare.create_or_update_dns_record(zone_id, hostname, origin_ip)
-        cloudflare.set_ssl_mode(zone_id, "full")
     except cloudflare.CloudflareError as e:
         await message.answer(f"❌ ساخت رکورد DNS ناموفق: {e}")
         return
-    await message.answer(
-        f"✅ DNS: {hostname} → سرور ایران (پشت Cloudflare، پروکسی‌شده)\n"
-        "✅ حالت SSL/TLS رو ست کردم Full (نه Flexible) — وگرنه Cloudflare با HTTP ساده "
-        "به سرور وصل می‌شد و Xray (که فقط TLS می‌فهمه) جوابی نمی‌داد."
-    )
+    await message.answer(f"✅ DNS: {hostname} → سرور ایران (پشت Cloudflare، پروکسی‌شده)")
+
+    # A separate try: needs a permission (Zone Settings) the token might not
+    # have, and DNS/cert/inbound are all still worth doing even if this one
+    # step needs to be set by hand in the dashboard instead.
+    try:
+        cloudflare.set_ssl_mode(zone_id, "full")
+        await message.answer(
+            "✅ حالت SSL/TLS رو ست کردم Full (نه Flexible) — وگرنه Cloudflare با HTTP ساده "
+            "به سرور وصل می‌شد و Xray (که فقط TLS می‌فهمه) جوابی نمی‌داد."
+        )
+    except cloudflare.CloudflareError as e:
+        await message.answer(
+            f"⚠️ نتونستم حالت SSL/TLS رو خودکار عوض کنم ({e}) — دستی تو Cloudflare چک کن: "
+            f"دامنه‌ی {domain} → SSL/TLS → Overview → باید رو Full یا Full (strict) باشه، نه Flexible."
+        )
 
     try:
         key_pem, csr_pem = cloudflare.generate_key_and_csr(hostname)
