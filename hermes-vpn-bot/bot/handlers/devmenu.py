@@ -593,10 +593,11 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
         return
     await message.answer("✅ گواهی روی سرور ایران نوشته شد.")
 
+    remark = f"ws-tls-{subdomain}"
     ws_path = "/" + os.urandom(6).hex()
     body = {
         "enable": True,
-        "remark": f"ws-tls-{subdomain}",
+        "remark": remark,
         "listen": "",
         "port": 2053,  # one of Cloudflare's allowed proxied HTTPS ports
         "protocol": "vless",
@@ -606,7 +607,11 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
         "streamSettings": {
             "network": "ws",
             "security": "tls",
-            "wsSettings": {"path": ws_path, "headers": {}},
+            # Cloudflare routes proxied requests by the HTTP Host header —
+            # an empty one means the WebSocket upgrade never reaches this
+            # origin at all, which looked exactly like "connected, zero
+            # bytes" from the client's side.
+            "wsSettings": {"path": ws_path, "headers": {"Host": hostname}},
             "tlsSettings": {
                 "serverName": hostname,
                 "certificates": [{"certificateFile": cert_path, "keyFile": key_path}],
@@ -616,12 +621,23 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
     }
     x = XUIClient()
     try:
-        new_inbound = x._request("POST", "/panel/api/inbounds/add", json=body)
-        new_id = new_inbound["id"]
+        # Re-running this for the same subdomain should fix the existing
+        # inbound in place, not pile up duplicates.
+        existing_id = None
+        for ib in x._request("GET", "/panel/api/inbounds/list") or []:
+            if ib.get("remark") == remark:
+                existing_id = ib.get("id")
+                break
+        if existing_id:
+            x._request("POST", f"/panel/api/inbounds/update/{existing_id}", json=body)
+            new_id = existing_id
+        else:
+            new_inbound = x._request("POST", "/panel/api/inbounds/add", json=body)
+            new_id = new_inbound["id"]
     except (XUIError, KeyError, TypeError) as e:
-        await message.answer(f"❌ ساخت اینباند جدید ناموفق: {e}")
+        await message.answer(f"❌ ساخت/اصلاح اینباند ناموفق: {e}")
         return
-    await message.answer(f"✅ اینباند جدید ساخته شد (id={new_id}, پورت 2053, مسیر {ws_path}).")
+    await message.answer(f"✅ اینباند آماده شد (id={new_id}, پورت 2053, مسیر {ws_path}).")
 
     try:
         x._request("POST", "/panel/api/server/restartXrayService")
