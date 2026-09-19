@@ -43,6 +43,13 @@ IRAN_SSH_PORT = int(os.getenv("IRAN_SSH_PORT", "22"))
 IRAN_SSH_USER = os.getenv("IRAN_SSH_USER", "")
 IRAN_SSH_PASSWORD = os.getenv("IRAN_SSH_PASSWORD", "")
 
+# Cloudflare API token (DNS:Edit scope) for the WS+TLS-behind-CDN setup —
+# api.cloudflare.com is unreachable from wherever this code gets written,
+# so the bot itself (with its own normal internet access) has to be the
+# one making these calls. Set via "تنظیم Cloudflare API" in the developer
+# bot, never hand-typed into this repo.
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+
 TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
 TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 

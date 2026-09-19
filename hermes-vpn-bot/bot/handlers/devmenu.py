@@ -31,6 +31,8 @@ import subprocess
 import tempfile
 import time
 
+import requests
+
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import (
@@ -165,7 +167,7 @@ MENU_PANEL = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔧 اتصال پنل جدید"), KeyboardButton(text="🔑 تنظیم SSH سرور ایران")],
         [KeyboardButton(text="🌐 تغییر دامنه Reality"), KeyboardButton(text="🔌 فعال/غیرفعال اینباند")],
-        [KeyboardButton(text="🔀 تغییر پورت اینباند")],
+        [KeyboardButton(text="🔀 تغییر پورت اینباند"), KeyboardButton(text="☁️ تنظیم Cloudflare API")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -489,6 +491,46 @@ async def _apply_new_port(message: Message, port_text: str):
         await message.answer(msg)
     except (XUIError, ValueError) as e:
         await message.answer(f"❌ ناموفق: {e}")
+
+
+# ---------------------------------------------------------------- new: Cloudflare API setup
+# api.cloudflare.com is unreachable from wherever this code is written, so
+# validation has to happen here, inside the bot's own already-running
+# process (which has ordinary internet access) — exactly the same shape
+# as the Iran-SSH setup above.
+
+@router.message(F.text == "☁️ تنظیم Cloudflare API")
+async def ask_cloudflare_token(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "cloudflare_token"}
+    await message.answer(
+        "توکن API کلودفلر رو بفرست (باید حداقل دسترسی Zone:DNS:Edit داشته باشه).\n"
+        "/cancel برای لغو."
+    )
+
+
+async def _apply_cloudflare_token(message: Message, token: str):
+    token = token.strip()
+    await message.answer("⏳ در حال بررسی توکن…")
+    try:
+        r = requests.get(
+            "https://api.cloudflare.com/client/v4/user/tokens/verify",
+            headers={"Authorization": f"Bearer {token}"}, timeout=15,
+        )
+        body = r.json()
+    except Exception as e:
+        await message.answer(f"❌ اتصال به Cloudflare ناموفق: {type(e).__name__}: {e}")
+        return
+    if not body.get("success"):
+        await message.answer(f"❌ توکن نامعتبره:\n{body.get('errors')}")
+        return
+
+    env_path = _env_path()
+    _set_env_var(env_path, "CLOUDFLARE_API_TOKEN", token)
+    await message.answer("✅ توکن تایید شد و ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
+    _, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", dev])
 
 
 # ---------------------------------------------------------------- new: repoint at a different panel
@@ -1436,6 +1478,8 @@ async def handle_pending(message: Message):
         await _apply_new_dest(message, text)
     elif action == "change_port":
         await _apply_new_port(message, text)
+    elif action == "cloudflare_token":
+        await _apply_cloudflare_token(message, message.text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
     elif action == "delete_client":
