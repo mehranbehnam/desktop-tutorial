@@ -143,6 +143,7 @@ MENU_SECURITY = ReplyKeyboardMarkup(
         [KeyboardButton(text="🚫 لیست مسدودی‌های Fail2ban")],
         [KeyboardButton(text="✅ رفع مسدودیت IP")],
         [KeyboardButton(text="🧱 وضعیت فایروال سرور ایران")],
+        [KeyboardButton(text="🔬 تست محلی TLS اینباند WS")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -905,6 +906,31 @@ async def iran_firewall_status(message: Message):
         return
     await message.answer(f"🧱 فایروال و پورت‌های در حال گوش‌دادن (سرور ایران):\n\n<pre>{out[-3500:]}</pre>",
                          parse_mode="HTML")
+
+
+@router.message(F.text == "🔬 تست محلی TLS اینباند WS")
+async def ws_tls_local_test(message: Message):
+    """A local TLS handshake against the WS+TLS inbound, from the Iran
+    server itself — this is the one test that removes Cloudflare from the
+    picture entirely. If this fails too, the problem is Xray/the cert, not
+    the CDN; if this succeeds, the problem is specifically between
+    Cloudflare and the origin (or Cloudflare and the client)."""
+    if not _admin(message):
+        return
+    try:
+        out, _ = iran_ssh.run(
+            "echo '--- listening on 2053? ---'; sudo ss -ltnp 2>&1 | grep -E ':2053\\b' "
+            "|| echo '(چیزی روی 2053 گوش نمی‌ده!)'; "
+            "echo '--- local TLS handshake (bypasses Cloudflare) ---'; "
+            "echo | timeout 8 openssl s_client -connect 127.0.0.1:2053 -servername cdn1.behrad.win 2>&1 "
+            "| head -25; "
+            "echo '--- recent xray/x-ui errors mentioning tls/cert ---'; "
+            "sudo journalctl -u x-ui -n 200 --no-pager 2>&1 | grep -iE 'tls|cert|2053' | tail -20"
+        )
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    await message.answer(f"🔬 تست محلی TLS (بدون Cloudflare):\n\n<pre>{out[-3500:]}</pre>", parse_mode="HTML")
 
 
 @router.message(F.text == "✅ رفع مسدودیت IP")
