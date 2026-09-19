@@ -596,16 +596,41 @@ async def _apply_iran_ssh(message: Message, host: str, port: int, user: str, pas
         await message.answer("❌ ماژول paramiko نصب نیست؛ یک بار /update بزن.")
         return
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # A plain SSHClient.connect() failure can't tell "wrong password" apart
+    # from "this server doesn't allow password auth for this user at all"
+    # (very common default on Ubuntu cloud images: PermitRootLogin
+    # prohibit-password — key-only, any password gets the same generic
+    # rejection). Talking to Transport directly surfaces which auth types
+    # the server actually offers, which settles that question outright.
+    transport = None
     try:
-        client.connect(host, port=port, username=user, password=password, timeout=15)
-        client.exec_command("echo ok")
+        transport = paramiko.Transport((host, port))
+        transport.connect()
+        try:
+            transport.auth_password(username=user, password=password)
+        except paramiko.ssh_exception.BadAuthenticationType as e:
+            allowed = ", ".join(e.allowed_types) or "(هیچ‌کدام)"
+            await message.answer(
+                "❌ این سرور اصلاً ورود با رمز عبور رو برای این یوزر قبول نمی‌کنه "
+                f"(معمولاً تنظیمات پیش‌فرض Ubuntu Cloud) — روش‌های مجاز: {allowed}\n\n"
+                "یعنی رمز اشتباه نیست؛ رمز عبور اصلاً به‌عنوان روش ورود فعال نیست. "
+                "باید یا از کنسول وب یه کلید SSH اضافه کنی، یا تو sshd_config یوزر "
+                "و رمز رو دستی فعال کنی. چیزی ذخیره نشد."
+            )
+            return
+        except paramiko.ssh_exception.AuthenticationException:
+            await message.answer(
+                "❌ سرور ورود با رمز عبور رو قبول می‌کنه، ولی این یوزر/رمز مشخص رد شد "
+                "(یعنی رمز واقعاً اشتباهه، نه محدودیت سرور). چیزی ذخیره نشد."
+            )
+            return
+        transport.open_session().close()
     except Exception as e:
         await message.answer(f"❌ اتصال ناموفق — چیزی ذخیره نشد:\n{type(e).__name__}: {e}")
         return
     finally:
-        client.close()
+        if transport is not None:
+            transport.close()
 
     env_path = _env_path()
     _set_env_var(env_path, "IRAN_SSH_HOST", host)
