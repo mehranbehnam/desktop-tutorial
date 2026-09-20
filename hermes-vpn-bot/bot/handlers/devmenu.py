@@ -158,7 +158,8 @@ MENU_MAINTENANCE = ReplyKeyboardMarkup(
         [KeyboardButton(text="💾 بکاپ دیتابیس"), KeyboardButton(text="🧪 تست تونل")],
         [KeyboardButton(text="♻️ ری‌استارت ربات فروش"), KeyboardButton(text="♻️ ری‌استارت ربات مدیریت (خودم)")],
         [KeyboardButton(text="♻️ ری‌استارت Xray"), KeyboardButton(text="♻️ ری‌استارت پنل X-UI (SSH)")],
-        [KeyboardButton(text="⬆️ آپدیت کد"), KeyboardButton(text="🆔 شناسایی پردازش")],
+        [KeyboardButton(text="⬆️ آپدیت کد"), KeyboardButton(text="🔑 تنظیم GitHub Token")],
+        [KeyboardButton(text="🆔 شناسایی پردازش")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -531,6 +532,43 @@ async def _apply_cloudflare_token(message: Message, token: str):
     env_path = _env_path()
     _set_env_var(env_path, "CLOUDFLARE_API_TOKEN", token)
     await message.answer("✅ توکن تایید شد و ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
+    _, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", dev])
+
+
+@router.message(F.text == "🔑 تنظیم GitHub Token")
+async def ask_github_token(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "github_token"}
+    await message.answer(
+        "GitHub personal access token رو بفرست — چون ریپو پابلیکه به هیچ scope خاصی نیاز نیست، "
+        "فقط سقف درخواست /update و setup رو از ۶۰ به ۵۰۰۰ در ساعت می‌بره بالا.\n"
+        "/cancel برای لغو."
+    )
+
+
+async def _apply_github_token(message: Message, token: str):
+    token = token.strip()
+    await message.answer("⏳ در حال بررسی توکن…")
+    try:
+        r = requests.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "irannewvpn-bot"},
+            timeout=15,
+        )
+        body = r.json()
+    except Exception as e:
+        await message.answer(f"❌ اتصال به GitHub ناموفق: {type(e).__name__}: {e}")
+        return
+    limit = body.get("rate", {}).get("limit", 0)
+    if r.status_code != 200 or limit <= 60:
+        await message.answer(f"❌ توکن تایید نشد (سقف: {limit}):\n{body}")
+        return
+
+    env_path = _env_path()
+    _set_env_var(env_path, "GITHUB_TOKEN", token)
+    await message.answer(f"✅ توکن تایید شد (سقف الان {limit} درخواست/ساعت). ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
     _, dev = _service_names()
     subprocess.Popen(["systemctl", "restart", dev])
 
@@ -1673,6 +1711,8 @@ async def handle_pending(message: Message):
         await _apply_new_port(message, text)
     elif action == "cloudflare_token":
         await _apply_cloudflare_token(message, message.text)
+    elif action == "github_token":
+        await _apply_github_token(message, message.text)
     elif action == "ws_tls_setup":
         await _do_ws_tls_setup(message, text)
     elif action == "broadcast":
