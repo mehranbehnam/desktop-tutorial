@@ -10,6 +10,7 @@ attempted as a fallback for builds that lack token auth — this one answers
 /login with 403 for any non-browser client.
 """
 import json
+import re
 import time
 
 import requests
@@ -241,12 +242,19 @@ class XUIClient:
                 emails.add(item["email"])
         return emails
 
-    def build_vless_link(self, client_uuid: str, email: str, remark: str = "") -> str:
+    def build_vless_link(self, client_uuid: str, email: str, remark: str = "",
+                          inbound_id: int = None) -> str:
         """Return the client's connection URL as the panel renders it.
 
         The panel knows the inbound's advertised hosts, Reality keys and
         protocol, so its own link is authoritative — including for inbounds
-        that are not Reality at all.
+        that are not Reality at all. One exception: for a WS+TLS inbound
+        fronted by a CDN (Cloudflare), the panel still renders the raw
+        origin IP as the address, which defeats the whole point of the
+        CDN — the client has to connect to the *hostname* so DNS routes it
+        through the CDN's edge instead of straight at a blockable IP. When
+        the configured inbound is such a setup, the address is swapped for
+        its own wsSettings Host header.
         """
         links = self._request("GET", f"/panel/api/clients/links/{email}") or []
         if not links:
@@ -254,4 +262,15 @@ class XUIClient:
         link = links[0]
         if remark:
             link = link.split("#", 1)[0] + "#" + remark
+
+        try:
+            inbound = self.get_inbound(inbound_id)
+            stream = inbound.get("streamSettings")
+            stream = json.loads(stream) if isinstance(stream, str) else (stream or {})
+            if stream.get("network") == "ws":
+                host = (stream.get("wsSettings") or {}).get("headers", {}).get("Host")
+                if host:
+                    link = re.sub(r"@[^:/?#]+(:\d+)", lambda m: f"@{host}{m.group(1)}", link, count=1)
+        except (XUIError, ValueError):
+            pass
         return link
