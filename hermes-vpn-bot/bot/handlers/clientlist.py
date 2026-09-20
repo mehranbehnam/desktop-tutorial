@@ -1,8 +1,10 @@
 """Shared client list: a paginated inline-button picker showing every
 client's live status at a glance — 🔵 online, 🔴 offline, 🔒 blocked — with
-tap-to-filter search. Used by both bots (via /clients and, on the developer
-bot, the "👥 کلاینت‌ها" / "🔍 وضعیت کلاینت" buttons) so there is exactly one
-implementation to fix instead of two menus quietly drifting apart.
+tap-to-filter search, and a detail card (Hermes-style layout) with buttons
+to connect, renew, resend the link, or rename. Used by both bots (via
+/clients and, on the developer bot, the "👥 کلاینت‌ها" / "🔍 وضعیت کلاینت"
+buttons) so there is exactly one implementation to fix instead of two
+menus quietly drifting apart.
 """
 import json
 import logging
@@ -13,14 +15,15 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config
+import db
 from xui_client import XUIClient, XUIError
 
 router = Router()
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10
-# tg_id -> {"emails": [...]} — the current (possibly search-filtered) list
-# this admin is paging through.
+# tg_id -> current multi-step state. "mode" is "list" (browsing/searching
+# the picker), "rename" or "renew" (a follow-up value is expected next).
 _pending: dict[int, dict] = {}
 
 
@@ -29,7 +32,26 @@ def _admin(obj) -> bool:
 
 
 def _size(n: int) -> str:
-    return f"{n / 1024**3:.2f}GB" if n >= 1024**3 else f"{n / 1024**2:.0f}MB"
+    """GB/MB, no trailing ".00" on a round number — "20GB" reads cleaner
+    than "20.00GB" on the detail card."""
+    n = max(0, n or 0)
+    if n < 1024**3:
+        return f"{n / 1024**2:.0f}MB"
+    gb = n / 1024**3
+    return f"{gb:.0f}GB" if gb == int(gb) else f"{gb:.2f}GB"
+
+
+def _remaining_time(expiry_ms: int) -> str:
+    if not expiry_ms:
+        return "بدون انقضا"
+    remain = expiry_ms - time.time() * 1000
+    if remain <= 0:
+        return "منقضی"
+    days = int(remain / 86400000)
+    if days >= 1:
+        return f"{days} روز"
+    hours = int(remain / 3600000)
+    return f"{hours} ساعت" if hours >= 1 else "کمتر از ۱ ساعت"
 
 
 def _list_clients(x: XUIClient) -> list[dict]:
@@ -91,7 +113,7 @@ async def show_list(message: Message):
     if not emails:
         await message.answer("هیچ کلاینتی روی اینباند نیست.")
         return
-    _pending[message.from_user.id] = {"emails": emails}
+    _pending[message.from_user.id] = {"mode": "list", "emails": emails}
     await message.answer(_header(len(emails), 0), reply_markup=_keyboard(x, emails, 0))
 
 
@@ -100,12 +122,23 @@ async def clients_command(message: Message):
     await show_list(message)
 
 
-def _searching(message: Message) -> bool:
+def _has_pending(message: Message) -> bool:
     return bool(message.text) and not message.text.startswith("/") and message.from_user.id in _pending
 
 
-@router.message(_searching)
-async def search_clients(message: Message):
+@router.message(_has_pending)
+async def handle_pending(message: Message):
+    pending = _pending[message.from_user.id]
+    mode = pending.get("mode", "list")
+    if mode == "rename":
+        await _rename_step(message, pending)
+    elif mode == "renew":
+        await _renew_step(message, pending)
+    else:
+        await _search_step(message, pending)
+
+
+async def _search_step(message: Message, pending: dict):
     query = message.text.strip().lower()
     x = XUIClient()
     try:
@@ -117,8 +150,46 @@ async def search_clients(message: Message):
     if not matched:
         await message.answer("چیزی با این اسم پیدا نشد — دوباره امتحان کن.")
         return
-    _pending[message.from_user.id] = {"emails": matched}
+    _pending[message.from_user.id] = {"mode": "list", "emails": matched}
     await message.answer(_header(len(matched), 0), reply_markup=_keyboard(x, matched, 0))
+
+
+async def _rename_step(message: Message, pending: dict):
+    email = pending["email"]
+    label = message.text.strip()[:40]
+    _pending.pop(message.from_user.id, None)
+    db.set_label(email, label)
+    await message.answer(f"✅ اسم «{email}» به «{label}» تغییر کرد.")
+    await show_detail(message, email)
+
+
+async def _renew_step(message: Message, pending: dict):
+    email = pending["email"]
+    try:
+        days = int(message.text.strip())
+    except ValueError:
+        await message.answer("عدد نامعتبر — فقط تعداد روز رو بفرست، یا /cancel بزن.")
+        return
+    _pending.pop(message.from_user.id, None)
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
+        await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
+        return
+    now_ms = int(time.time() * 1000)
+    cur_exp = t.get("expiryTime", 0)
+    base = cur_exp if cur_exp and cur_exp > now_ms else now_ms
+    body = {"email": email, "totalGB": t.get("total", 0), "expiryTime": base + days * 86400 * 1000, "enable": True}
+    flow = x.client_flow()
+    if flow:
+        body["flow"] = flow
+    try:
+        x._request("POST", f"/panel/api/clients/update/{email}", json=body)
+    except XUIError as e:
+        await message.answer(f"❌ ناموفق: {e}")
+        return
+    await message.answer(f"✅ {email} به مدت {days} روز تمدید شد.")
+    await show_detail(message, email)
 
 
 @router.callback_query(F.data.startswith("cl:pg:"))
@@ -127,7 +198,7 @@ async def page_button(callback: CallbackQuery):
         await callback.answer("فقط ادمین", show_alert=True)
         return
     pending = _pending.get(callback.from_user.id)
-    if not pending:
+    if not pending or "emails" not in pending:
         await callback.answer("این لیست دیگه معتبر نیست — دوباره /clients بزن.", show_alert=True)
         return
     page = int(callback.data.split(":", 2)[2])
@@ -143,7 +214,7 @@ async def pick_button(callback: CallbackQuery):
         await callback.answer("فقط ادمین", show_alert=True)
         return
     pending = _pending.get(callback.from_user.id)
-    if not pending:
+    if not pending or "emails" not in pending:
         await callback.answer("این لیست دیگه معتبر نیست — دوباره /clients بزن.", show_alert=True)
         return
     emails = pending["emails"]
@@ -156,23 +227,111 @@ async def pick_button(callback: CallbackQuery):
     await show_detail(callback.message, emails[idx])
 
 
+@router.callback_query(F.data == "cl:back")
+async def back_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    await callback.answer()
+    await show_list(callback.message)
+
+
+@router.callback_query(F.data.startswith("cl:link:"))
+async def link_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t or not t.get("uuid"):
+        await callback.answer("این کلاینت پیدا نشد.", show_alert=True)
+        return
+    try:
+        link = x.build_vless_link(t["uuid"], email)
+        sub_url = x.get_sub_url(email)
+    except Exception as e:
+        await callback.answer(f"{type(e).__name__}: {e}", show_alert=True)
+        return
+    await callback.answer()
+    text = f"🔗 لینک «{email}»:\n\n<code>{link}</code>"
+    if sub_url:
+        text += f"\n\n🔗 لینک سابسکرایب:\n<code>{sub_url}</code>"
+    await callback.message.answer(text, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("cl:rename:"))
+async def rename_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    _pending[callback.from_user.id] = {"mode": "rename", "email": email}
+    await callback.answer()
+    await callback.message.answer(f"اسم دلخواه جدید برای «{email}» رو بفرست (حداکثر ۴۰ کاراکتر). /cancel برای لغو.")
+
+
+@router.callback_query(F.data.startswith("cl:renew:"))
+async def renew_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    _pending[callback.from_user.id] = {"mode": "renew", "email": email}
+    await callback.answer()
+    await callback.message.answer(f"چند روز به «{email}» اضافه بشه؟ فقط عدد بفرست. /cancel برای لغو.")
+
+
+@router.message(Command("cancel", "stop"))
+async def cancel(message: Message):
+    if not _admin(message):
+        return
+    had = _pending.pop(message.from_user.id, None)
+    if had:
+        await message.answer("لغو شد.")
+
+
+def _detail_keyboard(email: str, sub_url: str) -> InlineKeyboardMarkup:
+    rows = []
+    if sub_url:
+        rows.append([InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)])
+    rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"cl:renew:{email}")])
+    rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"cl:link:{email}"),
+                 InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")])
+    rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def show_detail(message: Message, email: str):
     x = XUIClient()
     t = x.get_client_traffic(email)
     if not t:
         await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
         return
-    exp = t.get("expiryTime", 0)
-    exp_str = "بدون انقضا" if not exp else time.strftime("%Y-%m-%d %H:%M", time.localtime(exp / 1000))
     total = t.get("total", 0)
     used = t.get("up", 0) + t.get("down", 0)
     online = email in x.get_online_emails()
     enabled = t.get("enable", True)
-    conn = "🔒 مسدود" if not enabled else ("🔵 آنلاین" if online else "🔴 آفلاین")
-    await message.answer(
-        f"🔍 {email}\n"
-        f"اتصال: {conn}\n"
-        f"مصرف: {_size(used)} از {_size(total) if total else 'نامحدود'}\n"
-        f"انقضا: {exp_str}\n"
-        f"فعال: {'بله' if enabled else 'خیر'}"
+    label = db.get_labels([email]).get(email)
+
+    vol_lines = (
+        ["حجم کل: نامحدود"] if not total else
+        [f"حجم کل: {_size(total)}",
+         f"حجم مصرف‌شده: {_size(used)}",
+         f"حجم باقی‌مانده: {_size(max(0, total - used))}"]
     )
+    lines = [f"📄 {label or email}", "ـــــــــــــــــــ", f"شناسه اکانت: {email}"]
+    if label:
+        lines.append(f"اسم دلخواه: {label}")
+    lines += [
+        f"اتصال: {'🔵 آنلاین' if online else '🔴 آفلاین'}",
+        f"وضعیت: {'✅ فعال' if enabled else '🔒 مسدود'}",
+        *vol_lines,
+        f"زمان باقی‌مانده: {_remaining_time(t.get('expiryTime', 0))}",
+        f"یوزرنیم اپ: {email}",
+    ]
+    try:
+        sub_url = x.get_sub_url(email)
+    except Exception:
+        sub_url = ""
+    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, sub_url))

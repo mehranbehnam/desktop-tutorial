@@ -43,6 +43,17 @@ def _fmt_size(num_bytes: int) -> str:
     return f"{n / 1024**3:.2f} گیگ"
 
 
+def _fmt_size_en(num_bytes: int) -> str:
+    """Same idea as _fmt_size but GB/MB instead of گیگ/مگ, and no trailing
+    ".00" on a round number — used only on the single-account detail card,
+    where "20GB" reads cleaner than "20.00GB"."""
+    n = max(0, num_bytes or 0)
+    if n < 1024**3:
+        return f"{n / 1024**2:.0f}MB"
+    gb = n / 1024**3
+    return f"{gb:.0f}GB" if gb == int(gb) else f"{gb:.2f}GB"
+
+
 def _remaining_time(expiry_ms: int) -> str:
     if not expiry_ms:
         return "بدون انقضا"
@@ -136,27 +147,36 @@ async def status_view(callback: CallbackQuery):
     label = db.get_labels([email]).get(email)
 
     total_bytes = match["gb"] * 1024**3 if match["gb"] else 0
-    vol_line = (
-        "حجم کل: نامحدود" if not total_bytes else
-        f"حجم کل: {_fmt_size(total_bytes)}\n"
-        f"حجم مصرف‌شده: {_fmt_size(used)}\n"
-        f"حجم باقی‌مانده: {_fmt_size(max(0, total_bytes - used))}"
+    vol_lines = (
+        ["حجم کل: نامحدود"] if not total_bytes else
+        [f"حجم کل: {_fmt_size_en(total_bytes)}",
+         f"حجم مصرف‌شده: {_fmt_size_en(used)}",
+         f"حجم باقی‌مانده: {_fmt_size_en(max(0, total_bytes - used))}"]
     )
-    text = (
-        f"📄 {label or email}\n"
-        f"شناسه اکانت: {email}\n"
-        + (f"اسم دلخواه: {label}\n" if label else "")
-        + f"اتصال: {'🔵 آنلاین' if online else '🔴 آفلاین'}\n"
-        + f"وضعیت: {'فعال ✅' if enable else 'مسدود 🔒'}\n"
-        + f"{vol_line}\n"
-        + f"زمان باقی‌مانده: {_remaining_time(match['expiry_time'])}"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"renewpick:{email}")],
-        [InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"acc:link:{email}"),
-         InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"acc:rename:{email}")],
-        [InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="acc:page:0")],
-    ])
+    lines = [f"📄 {label or email}", "ـــــــــــــــــــ", f"شناسه اکانت: {email}"]
+    if label:
+        lines.append(f"اسم دلخواه: {label}")
+    lines += [
+        f"اتصال: {'🔵 آنلاین' if online else '🔴 آفلاین'}",
+        f"وضعیت: {'✅ فعال' if enable else '🔒 مسدود'}",
+        *vol_lines,
+        f"زمان باقی‌مانده: {_remaining_time(match['expiry_time'])}",
+        f"یوزرنیم اپ: {email}",
+    ]
+    text = "\n".join(lines)
+
+    try:
+        sub_url = xui.get_sub_url(email)
+    except Exception:
+        sub_url = ""
+    rows = []
+    if sub_url:
+        rows.append([InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)])
+    rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"renewpick:{email}")])
+    rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"acc:link:{email}"),
+                 InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"acc:rename:{email}")])
+    rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="acc:page:0")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
