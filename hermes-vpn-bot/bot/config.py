@@ -12,7 +12,10 @@ DEV_BOT_TOKEN = os.getenv("DEV_BOT_TOKEN", "")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@your_support")
 BOT_NAME = os.getenv("BOT_NAME", "VPN Store")
 
-# Real business bank card — set these in .env, never hardcode real numbers here.
+# Real business bank card — set via .env, or the bot's own "💳 تنظیم شماره
+# کارت" flow (which just writes .env). Never hardcoded here: this file is
+# tracked in git, and even non-secret-but-real business data doesn't belong
+# in permanent, public history.
 CARD_NUMBER = os.getenv("CARD_NUMBER", "0000-0000-0000-0000")
 CARD_OWNER = os.getenv("CARD_OWNER", "SET CARD_OWNER IN .env")
 CURRENCY_LABEL = os.getenv("CURRENCY_LABEL", "لیر")
@@ -63,9 +66,9 @@ TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [
-    {"key": "p30_30", "label": "30 گیگ / 30 روز", "gb": 30, "days": 30, "price": 500},
-    {"key": "p50_30", "label": "50 گیگ / 30 روز", "gb": 50, "days": 30, "price": 700},
-    {"key": "unl_30", "label": "نامحدود / 30 روز", "gb": 0, "days": 30, "price": 1000},
+    {"key": "p20_30", "label": "20 گیگ / 30 روز", "gb": 20, "days": 30, "price": 149},
+    {"key": "p50_30", "label": "50 گیگ / 30 روز", "gb": 50, "days": 30, "price": 249},
+    {"key": "unl_30", "label": "نامحدود / 30 روز", "gb": 0, "days": 30, "price": 549},
 ]
 
 PLANS_BY_KEY = {p["key"]: p for p in PLANS}
