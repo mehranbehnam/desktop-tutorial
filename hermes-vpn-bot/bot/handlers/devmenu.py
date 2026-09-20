@@ -180,6 +180,7 @@ MENU_FINANCE = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="📊 گزارش مالی")],
         [KeyboardButton(text="🧾 سفارش‌های اخیر"), KeyboardButton(text="📢 پیام همگانی")],
+        [KeyboardButton(text="💳 تنظیم شماره کارت")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -570,6 +571,43 @@ async def _apply_github_token(message: Message, token: str):
     _set_env_var(env_path, "GITHUB_TOKEN", token)
     await message.answer(f"✅ توکن تایید شد (سقف الان {limit} درخواست/ساعت). ذخیره شد. ربات مدیریت ری‌استارت می‌شه…")
     _, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", dev])
+
+
+@router.message(F.text == "💳 تنظیم شماره کارت")
+async def ask_card_number(message: Message):
+    if not _admin(message):
+        return
+    _pending[message.from_user.id] = {"action": "card_setup", "stage": "number"}
+    await message.answer(
+        "شماره کارتی که مشتری‌ها باید بهش واریز کنن رو بفرست (فقط رقم، فاصله یا خط تیره اشکالی نداره):\n"
+        "/cancel برای لغو."
+    )
+
+
+async def _card_setup_step(message: Message, pending: dict):
+    stage = pending["stage"]
+    text = message.text.strip()
+    if stage == "number":
+        pending["number"] = text
+        pending["stage"] = "owner"
+        _pending[message.from_user.id] = pending
+        await message.answer("نام و فامیل صاحب کارت رو دقیقاً به لاتین بفرست (همونی که رو رسید نشون داده می‌شه):")
+        return
+    if stage == "owner":
+        _pending.pop(message.from_user.id, None)
+        await _apply_card(message, pending["number"], text)
+
+
+async def _apply_card(message: Message, number: str, owner: str):
+    env_path = _env_path()
+    _set_env_var(env_path, "CARD_NUMBER", number)
+    _set_env_var(env_path, "CARD_OWNER", owner)
+    await message.answer(
+        f"✅ ذخیره شد:\n💳 {number}\n👤 {owner}\n\nهر دو ربات ری‌استارت می‌شن…"
+    )
+    sales, dev = _service_names()
+    subprocess.Popen(["systemctl", "restart", sales])
     subprocess.Popen(["systemctl", "restart", dev])
 
 
@@ -1679,6 +1717,9 @@ async def handle_pending(message: Message):
         return
     if action == "iran_ssh":
         await _iran_ssh_step(message, pending)
+        return
+    if action == "card_setup":
+        await _card_setup_step(message, pending)
         return
     if action == "new_client":
         await _new_client_step(message, pending)
