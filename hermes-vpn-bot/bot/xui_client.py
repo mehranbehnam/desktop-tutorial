@@ -223,6 +223,17 @@ class XUIClient:
         netloc = f"{host}:{port}" if port and str(port) not in ("80", "443") else host
         return f"{scheme}://{netloc}{path if path.startswith('/') else '/' + path}{sub_id}"
 
+    def set_client_enabled(self, email: str, enabled: bool):
+        """Block/unblock a client without touching its quota or expiry."""
+        t = self.get_client_traffic(email)
+        if not t:
+            raise XUIError(f"client {email} not found")
+        body = {"email": email, "totalGB": t.get("total", 0), "expiryTime": t.get("expiryTime", 0), "enable": enabled}
+        flow = self.client_flow()
+        if flow:
+            body["flow"] = flow
+        self._request("POST", f"/panel/api/clients/update/{email}", json=body)
+
     def get_online_emails(self) -> set[str]:
         """Best-effort live online-client list from the panel's own onlines
         endpoint. Panel versions differ in whether/how they expose this, so

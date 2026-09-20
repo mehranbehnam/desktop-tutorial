@@ -1586,12 +1586,8 @@ async def _do_toggle_client(message: Message, email: str):
         await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
         return
     new_state = not t.get("enable", True)
-    body = {"email": email, "totalGB": t.get("total", 0), "expiryTime": t.get("expiryTime", 0), "enable": new_state}
-    flow = x.client_flow()
-    if flow:
-        body["flow"] = flow
     try:
-        x._request("POST", f"/panel/api/clients/update/{email}", json=body)
+        x.set_client_enabled(email, new_state)
         await message.answer(f"✅ {email} حالا {'فعال' if new_state else 'غیرفعال'} است.")
     except XUIError as e:
         await message.answer(f"❌ ناموفق: {e}")

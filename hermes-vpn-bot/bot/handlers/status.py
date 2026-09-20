@@ -1,9 +1,10 @@
 import logging
 import time
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+import config
 import db
 from utils.delivery import send_service_pack
 from xui_client import XUIClient
@@ -14,6 +15,23 @@ log = logging.getLogger(__name__)
 ACCOUNTS_PAGE_SIZE = 6
 # tg_id -> email currently waiting for a new custom label.
 _RENAME_WAIT: dict[int, str] = {}
+
+# Repeatedly mashing "resend link" gains nothing for a legitimate customer
+# (the link doesn't change), so more than a few in an hour is almost always
+# either a broken client stuck retrying or someone probing/abusing the bot
+# — either way it's cheaper to pause the account and have a human look than
+# to let it keep going.
+RESEND_LIMIT = 5
+RESEND_WINDOW_S = 3600
+_resend_log: dict[int, list[float]] = {}
+
+
+def _resend_abuse(tg_id: int) -> bool:
+    now = time.time()
+    hits = [t for t in _resend_log.get(tg_id, []) if now - t < RESEND_WINDOW_S]
+    hits.append(now)
+    _resend_log[tg_id] = hits
+    return len(hits) > RESEND_LIMIT
 
 
 def _fmt_size(num_bytes: int) -> str:
@@ -189,10 +207,34 @@ async def status_rename_apply(message: Message):
 
 
 @router.message(F.text == "♻️ دریافت دوباره لینک")
-async def resend_link(message: Message):
+async def resend_link(message: Message, bot: Bot):
     clients = db.get_clients_for_user(message.from_user.id)
     if not clients:
         await message.answer("سرویس فعالی برای شما پیدا نشد.")
+        return
+
+    if _resend_abuse(message.from_user.id):
+        xui = XUIClient()
+        for c in clients:
+            try:
+                xui.set_client_enabled(c["xui_email"], False)
+            except Exception:
+                log.exception("failed to disable %s after resend abuse", c["xui_email"])
+        await message.answer(
+            "به‌خاطر استفاده‌ی غیرعادی از این دکمه (چند بار پشت‌سرهم توی یه ساعت)، "
+            "سرویس‌هات موقتاً مسدود شدن تا بررسی بشه.\n"
+            f"اگه اشتباهی بوده، با پشتیبانی تماس بگیر: {config.SUPPORT_USERNAME}"
+        )
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"🚨 هشدار سوءاستفاده: tg:{message.from_user.id} بیش از {RESEND_LIMIT} بار توی یک ساعت "
+                    "روی «دریافت دوباره لینک» زده و اکانت‌هاش خودکار مسدود شدن.\n"
+                    "برای رفع مسدودیت: 🔒 مسدود/فعال کلاینت",
+                )
+            except Exception:
+                log.exception("failed to alert admin %s about resend abuse", admin_id)
         return
 
     xui = XUIClient()
