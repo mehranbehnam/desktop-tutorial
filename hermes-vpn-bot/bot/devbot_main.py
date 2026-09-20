@@ -6,7 +6,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 import config
 import db
-from handlers import admin, buy, devmenu, ops, renew, start, status, trial
+from handlers import admin, buy, clientlist, devmenu, ops, renew, start, status, trial
 
 # Shown via the ☰ menu button next to the message box — kept to just the
 # basics (start/menu/cancel/stop). Everything else lives on the
@@ -47,6 +47,7 @@ async def main():
     # sales bot is ever down.
     dp.include_router(devmenu.router)
     dp.include_router(ops.router)
+    dp.include_router(clientlist.router)
     dp.include_router(start.router)
     dp.include_router(buy.router)
     dp.include_router(renew.router)

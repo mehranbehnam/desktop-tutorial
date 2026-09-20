@@ -54,7 +54,7 @@ HELP = (
     "/checksite domain.com — تست DNS/HTTPS یک سایت از خود سرور ایران\n"
     "/fixdns — تنظیم DNS سرور ایران روی گوگل/کلادفلر\n"
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
-    "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
+    "/clients — لیست کلاینت‌ها با وضعیت آنلاین/آفلاین (دکمه‌ای)\n"
     "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
     "/rmusers PREFIX COUNT — حذف انبوه با همون اسم‌ها\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
@@ -70,10 +70,6 @@ HELP = (
 
 def _admin(message: Message) -> bool:
     return message.from_user.id in config.ADMIN_IDS
-
-
-def _size(n: int) -> str:
-    return f"{n / 1024**3:.2f}GB" if n >= 1024**3 else f"{n / 1024**2:.0f}MB"
 
 
 @router.message(Command("ops"))
@@ -375,37 +371,6 @@ async def live_config(message: Message):
         lines.append(f"⚠️ هیچ inbound-ی با پورت {want_port} تو کانفیگ زنده پیدا نشد.")
 
     await message.answer("🔬 کانفیگ زنده‌ی Xray (از getConfigJson):\n\n" + "\n".join(lines))
-
-
-@router.message(Command("clients"))
-async def clients_cmd(message: Message):
-    if not _admin(message):
-        return
-    x = XUIClient()
-    try:
-        inbound = x.get_inbound()
-        settings = inbound.get("settings")
-        settings = json.loads(settings) if isinstance(settings, str) else (settings or {})
-        clients = settings.get("clients") or []
-    except (XUIError, ValueError) as e:
-        await message.answer(f"خطا: {e}")
-        return
-
-    if not clients:
-        await message.answer("هیچ کلاینتی روی اینباند نیست.")
-        return
-
-    now = time.time() * 1000
-    rows = []
-    for c in clients[-20:]:
-        em = c.get("email", "?")
-        t = x.get_client_traffic(em) or {}
-        exp = t.get("expiryTime", 0)
-        state = "منقضی" if exp and exp < now else "فعال"
-        rows.append(f"• {em}\n   {_size(t.get('up',0)+t.get('down',0))} از "
-                    f"{_size(t.get('total',0)) if t.get('total') else '∞'} — {state}"
-                    f" — flow: {c.get('flow') or 'ندارد'}")
-    await message.answer("👥 کلاینت‌ها:\n\n" + "\n".join(rows))
 
 
 @router.message(Command("mkusers"))

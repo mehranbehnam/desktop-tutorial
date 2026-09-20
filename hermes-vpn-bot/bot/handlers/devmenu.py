@@ -47,7 +47,7 @@ from aiogram.types import (
 
 import config
 import db
-from handlers import ops
+from handlers import clientlist, ops
 from keyboards import admin_review_keyboard
 from utils import iran_ssh
 from utils.envfile import env_path as _env_path, service_names as _service_names, set_env_var as _set_env_var
@@ -279,7 +279,7 @@ async def btn_live_config(message: Message):
 
 @router.message(F.text == "👥 کلاینت‌ها")
 async def btn_clients(message: Message):
-    await ops.clients_cmd(message)
+    await clientlist.show_list(message)
 
 
 @router.message(F.text == "🛠 اصلاح Flow")
@@ -1564,147 +1564,14 @@ async def _do_bulk_create(message: Message, count: int, gb: int, days: int):
     await message.answer(text)
 
 
-# "وضعیت کلاینت" used to just ask you to type the exact email. With clients
-# in the dozens, an admin never remembers exact emails — this is a paginated
-# picker instead: each button shows a status dot (🔵 online / 🔴 offline /
-# 🔒 blocked) so the state is visible before you even tap in, and typing
-# anything while the picker is open filters it by substring instead of
-# requiring an exact match.
-
-CLIENT_PICKER_PAGE_SIZE = 10
-
-
-def _client_status_dot(email: str, online: set[str], clients_by_email: dict) -> str:
-    enabled = clients_by_email.get(email, {}).get("enable", True)
-    if not enabled:
-        return "🔒"
-    return "🔵" if email in online else "🔴"
-
-
-def _clients_status_keyboard(x: XUIClient, emails: list[str], page: int) -> InlineKeyboardMarkup:
-    clients_by_email = {c.get("email"): c for c in ops._list_clients(x)}
-    online = x.get_online_emails()
-    start = page * CLIENT_PICKER_PAGE_SIZE
-    chunk = list(enumerate(emails))[start:start + CLIENT_PICKER_PAGE_SIZE]
-    rows, row = [], []
-    for idx, email in chunk:
-        dot = _client_status_dot(email, online, clients_by_email)
-        row.append(InlineKeyboardButton(text=f"{dot} {email}", callback_data=f"devcs:p:{idx}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀️ قبلی", callback_data=f"devcs:pg:{page-1}"))
-    if start + CLIENT_PICKER_PAGE_SIZE < len(emails):
-        nav.append(InlineKeyboardButton(text="بعدی ▶️", callback_data=f"devcs:pg:{page+1}"))
-    if nav:
-        rows.append(nav)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _clients_status_header(total: int, page: int) -> str:
-    start = page * CLIENT_PICKER_PAGE_SIZE
-    shown = max(0, min(CLIENT_PICKER_PAGE_SIZE, total - start))
-    return (f"کدوم کلاینت رو می‌خوای چک کنی؟\n\n"
-            f"({shown} از {total} — یا اسمی رو تایپ کن تا جستجو کنم)")
-
+# "کلاینت‌ها" and "وضعیت کلاینت" both just want the same client-status
+# picker (list, pick one, see its status) — handlers/clientlist.py owns the
+# actual implementation (shared with the sales bot's /clients) so there is
+# only one place to fix a bug in it.
 
 @router.message(F.text == "🔍 وضعیت کلاینت")
 async def ask_client_status(message: Message):
-    if not _admin(message):
-        return
-    x = XUIClient()
-    try:
-        clients = ops._list_clients(x)
-    except (XUIError, ValueError) as e:
-        await message.answer(f"❌ خطا در خوندن لیست کلاینت‌ها: {e}")
-        return
-    emails = [c.get("email", "?") for c in clients]
-    if not emails:
-        await message.answer("هیچ کلاینتی روی اینباند نیست.")
-        return
-    _pending[message.from_user.id] = {"action": "client_status_pick", "emails": emails}
-    await message.answer(_clients_status_header(len(emails), 0),
-                          reply_markup=_clients_status_keyboard(x, emails, 0))
-
-
-async def _client_status_search_step(message: Message, pending: dict):
-    query = message.text.strip().lower()
-    x = XUIClient()
-    try:
-        all_emails = [c.get("email", "?") for c in ops._list_clients(x)]
-    except (XUIError, ValueError) as e:
-        await message.answer(f"❌ خطا: {e}")
-        return
-    matched = [e for e in all_emails if query in e.lower()] if query else all_emails
-    if not matched:
-        await message.answer("چیزی با این اسم پیدا نشد — دوباره امتحان کن یا /cancel بزن.")
-        return
-    pending["emails"] = matched
-    _pending[message.from_user.id] = pending
-    await message.answer(_clients_status_header(len(matched), 0),
-                          reply_markup=_clients_status_keyboard(x, matched, 0))
-
-
-@router.callback_query(F.data.startswith("devcs:pg:"))
-async def client_status_page_button(callback: CallbackQuery):
-    if callback.from_user.id not in config.ADMIN_IDS:
-        await callback.answer("فقط ادمین", show_alert=True)
-        return
-    pending = _pending.get(callback.from_user.id)
-    if not pending or pending.get("action") != "client_status_pick":
-        await callback.answer("این لیست دیگه معتبر نیست — دوباره 🔍 وضعیت کلاینت رو بزن.", show_alert=True)
-        return
-    page = int(callback.data.split(":", 2)[2])
-    emails = pending["emails"]
-    x = XUIClient()
-    await callback.message.edit_text(_clients_status_header(len(emails), page),
-                                      reply_markup=_clients_status_keyboard(x, emails, page))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("devcs:p:"))
-async def client_status_pick_button(callback: CallbackQuery):
-    if callback.from_user.id not in config.ADMIN_IDS:
-        await callback.answer("فقط ادمین", show_alert=True)
-        return
-    pending = _pending.get(callback.from_user.id)
-    if not pending or pending.get("action") != "client_status_pick":
-        await callback.answer("این لیست دیگه معتبر نیست — دوباره 🔍 وضعیت کلاینت رو بزن.", show_alert=True)
-        return
-    idx = int(callback.data.split(":", 2)[2])
-    emails = pending["emails"]
-    if idx < 0 or idx >= len(emails):
-        await callback.answer("این کلاینت دیگه تو لیست نیست.", show_alert=True)
-        return
-    _pending.pop(callback.from_user.id, None)
-    await callback.answer()
-    await _do_client_status(callback.message, emails[idx])
-
-
-async def _do_client_status(message: Message, email: str):
-    x = XUIClient()
-    t = x.get_client_traffic(email)
-    if not t:
-        await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
-        return
-    exp = t.get("expiryTime", 0)
-    exp_str = "بدون انقضا" if not exp else time.strftime("%Y-%m-%d %H:%M", time.localtime(exp / 1000))
-    total = t.get("total", 0)
-    used = t.get("up", 0) + t.get("down", 0)
-    online = email in x.get_online_emails()
-    enabled = t.get("enable", True)
-    conn = "🔒 مسدود" if not enabled else ("🔵 آنلاین" if online else "🔴 آفلاین")
-    await message.answer(
-        f"🔍 {email}\n"
-        f"اتصال: {conn}\n"
-        f"مصرف: {_size(used)} از {_size(total) if total else 'نامحدود'}\n"
-        f"انقضا: {exp_str}\n"
-        f"فعال: {'بله' if enabled else 'خیر'}"
-    )
+    await clientlist.show_list(message)
 
 
 @router.message(F.text == "➕ افزایش حجم/زمان")
@@ -1994,9 +1861,6 @@ async def handle_pending(message: Message):
         return
     if action == "increase":
         await _increase_step(message, pending)
-        return
-    if action == "client_status_pick":
-        await _client_status_search_step(message, pending)
         return
     if action == "extend_client":
         if pending["stage"] == "email":

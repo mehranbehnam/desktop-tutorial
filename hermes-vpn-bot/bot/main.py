@@ -6,7 +6,7 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 import config
 import db
-from handlers import admin, buy, renew, start, status, trial
+from handlers import admin, buy, clientlist, renew, start, status, trial
 
 # Shown to every user via the ☰ menu button next to the message box. This is
 # the customer-facing sales bot — no server/maintenance commands here at
@@ -39,6 +39,7 @@ async def main():
     dp = Dispatcher()
 
     dp.include_router(start.router)
+    dp.include_router(clientlist.router)
     dp.include_router(buy.router)
     dp.include_router(renew.router)
     dp.include_router(trial.router)
