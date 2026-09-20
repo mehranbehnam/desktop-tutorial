@@ -60,7 +60,7 @@ async def choose_renew_plan(callback: CallbackQuery):
 
     text = (
         f"تمدید سرویس: {plan['label']}\n\n"
-        f"مبلغ قابل پرداخت — دقیقاً همین عدد:\n💰 {amount:,} تومان\n\n"
+        f"مبلغ قابل پرداخت — دقیقاً همین عدد:\n💰 {amount:,} {config.CURRENCY_LABEL}\n\n"
         f"شماره کارت:\n💳 {config.CARD_NUMBER}\n👤 به نام: {config.CARD_OWNER}\n\n"
         "بعد از واریز، رسید رو همینجا بفرست.\n"
         f"(شماره سفارش: #{order_id})"

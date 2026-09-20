@@ -127,17 +127,6 @@ def get_clients_for_user(tg_id: int):
         return conn.execute("SELECT * FROM clients WHERE tg_id=?", (tg_id,)).fetchall()
 
 
-def report_last_24h():
-    since = int(time.time()) - 24 * 3600
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total "
-            "FROM orders WHERE status='approved' AND created_at >= ?",
-            (since,),
-        ).fetchone()
-        return row["cnt"], row["total"]
-
-
 def report_since(seconds: int | None):
     """Approved-order count/total since `seconds` ago, or all-time if None."""
     with get_conn() as conn:

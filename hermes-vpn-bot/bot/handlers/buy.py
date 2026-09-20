@@ -44,7 +44,7 @@ async def choose_plan(callback: CallbackQuery, bot: Bot):
     text = (
         f"پلن انتخابی: {plan['label']}\n\n"
         f"مبلغ قابل پرداخت — دقیقاً همین عدد (روش بزن تا کپی شه):\n"
-        f"💰 {amount:,} تومان\n\n"
+        f"💰 {amount:,} {config.CURRENCY_LABEL}\n\n"
         f"شماره کارت (روش بزن تا کپی شه):\n"
         f"💳 {config.CARD_NUMBER}\n"
         f"👤 به نام: {config.CARD_OWNER}\n\n"
@@ -70,7 +70,7 @@ async def receive_receipt(message: Message, bot: Bot):
         f"🧾 رسید جدید برای سفارش #{order_id}\n"
         f"کاربر: @{message.from_user.username or message.from_user.id} (id: {message.from_user.id})\n"
         f"پلن: {order['gb']} گیگ / {order['days']} روز\n"
-        f"مبلغ: {order['amount']:,} تومان"
+        f"مبلغ: {order['amount']:,} {config.CURRENCY_LABEL}"
     )
     for admin_id in config.ADMIN_IDS:
         try:

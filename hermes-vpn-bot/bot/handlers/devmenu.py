@@ -1203,7 +1203,7 @@ async def stats_cmd(message: Message):
         f"کاربران: {s['users']}\n"
         f"تست‌های استفاده‌شده: {s['trial_used']}\n"
         f"کلاینت‌های ساخته‌شده: {s['clients']}\n"
-        f"سفارش‌های تاییدشده: {s['orders_approved']} — جمع {s['revenue_total']:,} تومان\n"
+        f"سفارش‌های تاییدشده: {s['orders_approved']} — جمع {s['revenue_total']:,} {config.CURRENCY_LABEL}\n"
         f"سفارش‌های در انتظار بررسی: {s['orders_pending']}"
     )
 
@@ -1217,7 +1217,7 @@ async def financial_report(message: Message):
     lines = []
     for label, seconds in periods:
         cnt, total = db.report_since(seconds)
-        lines.append(f"{label}: {cnt} سفارش — {total:,} تومان")
+        lines.append(f"{label}: {cnt} سفارش — {total:,} {config.CURRENCY_LABEL}")
     await message.answer("📊 گزارش مالی:\n\n" + "\n".join(lines))
 
 
@@ -1231,7 +1231,7 @@ async def recent_orders_cmd(message: Message):
         return
     lines = []
     for o in orders:
-        lines.append(f"#{o['id']} — {o['plan_key']} — {o['amount']:,} تومان — {o['status']} — tg:{o['tg_id']}")
+        lines.append(f"#{o['id']} — {o['plan_key']} — {o['amount']:,} {config.CURRENCY_LABEL} — {o['status']} — tg:{o['tg_id']}")
     await message.answer("🧾 ۱۰ سفارش اخیر:\n\n" + "\n".join(lines))
 
 

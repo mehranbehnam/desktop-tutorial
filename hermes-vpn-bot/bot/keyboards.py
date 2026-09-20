@@ -21,7 +21,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
 def plans_keyboard(prefix: str = "buy") -> InlineKeyboardMarkup:
     rows = []
     for plan in config.PLANS:
-        text = f"{plan['label']} — {plan['price']:,} تومان"
+        text = f"{plan['label']} — {plan['price']:,} {config.CURRENCY_LABEL}"
         rows.append([InlineKeyboardButton(text=text, callback_data=f"{prefix}:{plan['key']}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

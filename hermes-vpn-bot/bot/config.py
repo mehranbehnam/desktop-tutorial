@@ -15,6 +15,7 @@ BOT_NAME = os.getenv("BOT_NAME", "VPN Store")
 # Real business bank card — set these in .env, never hardcode real numbers here.
 CARD_NUMBER = os.getenv("CARD_NUMBER", "0000-0000-0000-0000")
 CARD_OWNER = os.getenv("CARD_OWNER", "SET CARD_OWNER IN .env")
+CURRENCY_LABEL = os.getenv("CURRENCY_LABEL", "لیر")
 
 XUI_BASE_URL = os.getenv("XUI_BASE_URL", "http://127.0.0.1:2053")
 # Preferred auth: an API token (Authorization: Bearer ...) — newer 3x-ui
@@ -62,11 +63,9 @@ TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [
-    {"key": "p10_30", "label": "10 گیگ / 30 روز", "gb": 10, "days": 30, "price": 40000},
-    {"key": "p20_30", "label": "20 گیگ / 30 روز", "gb": 20, "days": 30, "price": 60000},
-    {"key": "p30_30", "label": "30 گیگ / 30 روز", "gb": 30, "days": 30, "price": 85000},
-    {"key": "p50_30", "label": "50 گیگ / 30 روز", "gb": 50, "days": 30, "price": 130000},
-    {"key": "p100_30", "label": "100 گیگ / 30 روز", "gb": 100, "days": 30, "price": 180000},
+    {"key": "p30_30", "label": "30 گیگ / 30 روز", "gb": 30, "days": 30, "price": 500},
+    {"key": "p50_30", "label": "50 گیگ / 30 روز", "gb": 50, "days": 30, "price": 700},
+    {"key": "unl_30", "label": "نامحدود / 30 روز", "gb": 0, "days": 30, "price": 1000},
 ]
 
 PLANS_BY_KEY = {p["key"]: p for p in PLANS}

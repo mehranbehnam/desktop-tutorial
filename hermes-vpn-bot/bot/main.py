@@ -2,20 +2,18 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonCommands
+from aiogram.types import BotCommand, MenuButtonCommands
 
 import config
 import db
-from handlers import admin, buy, ops, renew, start, status, trial
+from handlers import admin, buy, renew, start, status, trial
 
-# Shown to every user via the ☰ menu button next to the message box.
+# Shown to every user via the ☰ menu button next to the message box. This is
+# the customer-facing sales bot — no server/maintenance commands here at
+# all (those live only on the separate developer bot, devbot_main.py).
 COMMANDS_DEFAULT = [
     BotCommand(command="start", description="شروع و نمایش منو"),
     BotCommand(command="stop", description="لغو / بازگشت به منو"),
-]
-# Extra commands shown only in an admin's own chat with the bot.
-COMMANDS_ADMIN_EXTRA = [
-    BotCommand(command="report", description="گزارش مالی ۲۴ ساعت اخیر"),
 ]
 
 
@@ -25,14 +23,6 @@ async def _setup_commands(bot: Bot):
     # doesn't change what that button looks like or does.
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     await bot.set_my_commands(COMMANDS_DEFAULT)
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await bot.set_my_commands(
-                COMMANDS_DEFAULT + COMMANDS_ADMIN_EXTRA,
-                scope=BotCommandScopeChat(chat_id=admin_id),
-            )
-        except Exception:
-            logging.exception("failed to set admin command menu for %s", admin_id)
 
 
 async def main():
@@ -54,7 +44,6 @@ async def main():
     dp.include_router(trial.router)
     dp.include_router(status.router)
     dp.include_router(admin.router)
-    dp.include_router(ops.router)
 
     await _setup_commands(bot)
 
