@@ -57,6 +57,12 @@ jobs:
             if sudo test -x "$PIP"; then
               sudo "$PIP" install -q -r "$APP/bot/requirements.txt"
             fi
+            ENVF="$APP/bot/.env"
+            if sudo grep -q '^XUI_INBOUND_ID=' "$ENVF" 2>/dev/null; then
+              sudo sed -i 's/^XUI_INBOUND_ID=.*/XUI_INBOUND_ID=2/' "$ENVF"
+            else
+              echo 'XUI_INBOUND_ID=2' | sudo tee -a "$ENVF" >/dev/null
+            fi
             sudo systemctl restart "$SVC"
             sudo systemctl restart "$SVC-dev" 2>/dev/null || true
             echo "deployed and restarted $SVC (+ $SVC-dev if present)"
