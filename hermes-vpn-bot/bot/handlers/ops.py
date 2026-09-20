@@ -155,21 +155,31 @@ async def checksite(message: Message):
     domain = parts[1].strip().removeprefix("http://").removeprefix("https://").split("/")[0]
 
     await message.answer(f"⏳ در حال تست {domain} از خود سرور ایران…")
+
+    # Each step reported independently: a slow/hanging HTTPS step (the most
+    # likely one to actually time out, since it's talking to a third-party
+    # site, not our own server) shouldn't wipe out a DNS result that
+    # already came back fine.
     try:
         dns_out, _ = iran_ssh.run(f"getent hosts {domain} || echo NO_DNS", timeout=15)
+        dns_line = dns_out.strip() or "(خالی)"
+    except iran_ssh.IranSSHError as e:
+        dns_line = f"❌ {e}"
+
+    try:
         curl_out, _ = iran_ssh.run(
             f"curl -sS -o /dev/null -w 'HTTP:%{{http_code}} TIME:%{{time_total}}s\\n' "
-            f"--max-time 12 -A 'Mozilla/5.0' https://{domain}/ 2>&1 || echo CURL_FAILED",
-            timeout=20,
+            f"--connect-timeout 10 --max-time 20 -A 'Mozilla/5.0' https://{domain}/ 2>&1 || echo CURL_FAILED",
+            timeout=30,
         )
+        curl_line = curl_out.strip() or "(خالی)"
     except iran_ssh.IranSSHError as e:
-        await message.answer(f"❌ {e}")
-        return
+        curl_line = f"❌ {e}"
 
     await message.answer(
         f"🔎 نتیجه‌ی تست {domain} از سرور ایران:\n\n"
-        f"DNS:\n{dns_out.strip() or '(خالی)'}\n\n"
-        f"HTTPS:\n{curl_out.strip() or '(خالی)'}"
+        f"DNS:\n{dns_line}\n\n"
+        f"HTTPS:\n{curl_line}"
     )
 
 
