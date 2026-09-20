@@ -26,6 +26,14 @@ def plans_keyboard(prefix: str = "buy") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def bulk_packages_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for pkg in config.BULK_PACKAGES:
+        text = f"{pkg['label']} — {pkg['price']:,} {config.CURRENCY_LABEL}"
+        rows.append([InlineKeyboardButton(text=text, callback_data=f"buybulk:{pkg['key']}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_review_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

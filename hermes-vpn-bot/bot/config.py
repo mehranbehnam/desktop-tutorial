@@ -69,3 +69,22 @@ PLANS = [
 ]
 
 PLANS_BY_KEY = {p["key"]: p for p in PLANS}
+
+# Bulk packages (for resellers): 10 accounts of a plan at a discount off the
+# 10x single-purchase price. No real bulk pricing was given, so this is a
+# placeholder default (10% off) — change BULK_DISCOUNT, or edit
+# BULK_PACKAGES directly, whenever real numbers are decided.
+BULK_QUANTITY = int(os.getenv("BULK_QUANTITY", "10"))
+BULK_DISCOUNT = float(os.getenv("BULK_DISCOUNT", "0.10"))
+BULK_PACKAGES = [
+    {
+        "key": f"bulk_{p['key']}",
+        "label": f"{p['label']} × {BULK_QUANTITY} (تخفیف {int(BULK_DISCOUNT * 100)}٪)",
+        "gb": p["gb"],
+        "days": p["days"],
+        "quantity": BULK_QUANTITY,
+        "price": round(p["price"] * BULK_QUANTITY * (1 - BULK_DISCOUNT)),
+    }
+    for p in PLANS
+]
+BULK_PACKAGES_BY_KEY = {p["key"]: p for p in BULK_PACKAGES}

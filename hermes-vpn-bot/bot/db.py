@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS orders (
     status TEXT DEFAULT 'pending',      -- pending | awaiting_review | approved | rejected
     xui_email TEXT,
     renew_target_email TEXT,            -- set when this order is a renewal of an existing client
+    quantity INTEGER DEFAULT 1,         -- >1 for a bulk-purchase order (N separate accounts)
     created_at INTEGER
 );
 
@@ -62,6 +63,11 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # orders predates the `quantity` column (bulk purchases) — add it to
+        # any database created before this without touching existing rows.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(orders)").fetchall()}
+        if "quantity" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN quantity INTEGER DEFAULT 1")
 
 
 def upsert_user(tg_id: int, username: str | None):
@@ -92,12 +98,13 @@ def create_order(
     base_price: int,
     amount: int,
     renew_target_email: str | None = None,
+    quantity: int = 1,
 ) -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO orders (tg_id, plan_key, gb, days, base_price, amount, status, renew_target_email, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'awaiting_review', ?, ?)",
-            (tg_id, plan_key, gb, days, base_price, amount, renew_target_email, int(time.time())),
+            "INSERT INTO orders (tg_id, plan_key, gb, days, base_price, amount, status, renew_target_email, quantity, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'awaiting_review', ?, ?, ?)",
+            (tg_id, plan_key, gb, days, base_price, amount, renew_target_email, quantity, int(time.time())),
         )
         return cur.lastrowid
 
@@ -179,6 +186,13 @@ def pending_orders(limit: int = 20):
         return conn.execute(
             "SELECT * FROM orders WHERE status='awaiting_review' ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
+
+
+def get_pending_order_by_amount(amount: int):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE amount=? AND status='awaiting_review'", (amount,)
+        ).fetchone()
 
 
 def get_labels(emails: list[str]) -> dict[str, str]:
