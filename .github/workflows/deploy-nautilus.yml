@@ -44,19 +44,19 @@ jobs:
           password: ${{ secrets.NAUTILUS_PASSWORD }}
           script: |
             set -e
-            APP=$(ls -d /opt/irannewvpn-bot /opt/hermes-vpn-bot 2>/dev/null | head -1)
+            APP=$(sudo ls -d /opt/irannewvpn-bot /opt/hermes-vpn-bot 2>/dev/null | head -1)
             if [ -z "$APP" ]; then
               echo "no install directory found under /opt"
               exit 1
             fi
             SVC=$(basename "$APP")
-            cp -r /tmp/hermes-deploy/hermes-vpn-bot/bot/. "$APP/bot/"
-            cp -r /tmp/hermes-deploy/hermes-vpn-bot/server/. "$APP/server/" 2>/dev/null || true
+            sudo cp -r /tmp/hermes-deploy/hermes-vpn-bot/bot/. "$APP/bot/"
+            sudo cp -r /tmp/hermes-deploy/hermes-vpn-bot/server/. "$APP/server/" 2>/dev/null || true
             rm -rf /tmp/hermes-deploy
             PIP="$APP/venv/bin/pip"
-            if [ -x "$PIP" ]; then
-              "$PIP" install -q -r "$APP/bot/requirements.txt"
+            if sudo test -x "$PIP"; then
+              sudo "$PIP" install -q -r "$APP/bot/requirements.txt"
             fi
-            systemctl restart "$SVC"
-            systemctl restart "$SVC-dev" 2>/dev/null || true
+            sudo systemctl restart "$SVC"
+            sudo systemctl restart "$SVC-dev" 2>/dev/null || true
             echo "deployed and restarted $SVC (+ $SVC-dev if present)"
