@@ -176,10 +176,26 @@ async def checksite(message: Message):
     except iran_ssh.IranSSHError as e:
         curl_line = f"❌ {e}"
 
+    # If the system resolver can't find it, this checks whether the domain
+    # resolves anywhere at all (via known-good public DNS) — distinguishes
+    # "our server's configured resolver specifically can't reach it" (fixable)
+    # from "nobody can resolve this" (wrong domain, or genuinely gone).
+    try:
+        alt_out, _ = iran_ssh.run(
+            "if ! command -v dig >/dev/null 2>&1; then apt-get install -y -qq dnsutils >/dev/null 2>&1 || true; fi; "
+            f"echo '8.8.8.8:'; dig +time=5 +tries=1 @8.8.8.8 +short {domain} || echo '(no answer)'; "
+            f"echo '1.1.1.1:'; dig +time=5 +tries=1 @1.1.1.1 +short {domain} || echo '(no answer)'",
+            timeout=20,
+        )
+        alt_line = alt_out.strip() or "(خالی)"
+    except iran_ssh.IranSSHError as e:
+        alt_line = f"❌ {e}"
+
     await message.answer(
         f"🔎 نتیجه‌ی تست {domain} از سرور ایران:\n\n"
-        f"DNS:\n{dns_line}\n\n"
-        f"HTTPS:\n{curl_line}"
+        f"DNS (سیستم پیش‌فرض):\n{dns_line}\n\n"
+        f"HTTPS:\n{curl_line}\n\n"
+        f"DNS (سرورهای دیگه):\n{alt_line}"
     )
 
 
