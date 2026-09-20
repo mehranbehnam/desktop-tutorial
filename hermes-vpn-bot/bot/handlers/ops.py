@@ -49,6 +49,7 @@ async def report_crashes(event):
 HELP = (
     "🛠 دستورهای مدیریت:\n\n"
     "/diag — بررسی کامل سرور و پنل\n"
+    "/xuiinfo — آدرس و اطلاعات ورود پنل X-UI (فقط اینجا، خصوصی)\n"
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
@@ -108,6 +109,28 @@ async def whoami(message: Message):
             lines.append("\n⚠️ بیش از یک پردازش در حال اجراست — همین باعث جواب‌های نامنظم می‌شود.")
     except Exception as e:
         lines.append(f"\n(بررسی پردازش‌ها ممکن نشد: {e})")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("xuiinfo"))
+async def xuiinfo(message: Message):
+    """Panel login info, sent straight to this private admin chat — never
+    through a log or any other channel that isn't meant for secrets."""
+    if not _admin(message):
+        return
+    base = config.XUI_BASE_URL or "(تنظیم نشده)"
+    public_url = base.replace("127.0.0.1", config.XUI_PUBLIC_HOST or "85.198.48.9")
+    lines = [
+        f"آدرس پنل (برای مرورگر): {public_url}",
+        f"یوزرنیم: {config.XUI_USERNAME or '(تنظیم نشده)'}",
+        f"پسورد: {config.XUI_PASSWORD or '(تنظیم نشده)'}",
+    ]
+    if config.XUI_API_TOKEN:
+        lines.append(
+            "\nنکته: ربات با API Token به پنل وصل می‌شه، نه یوزر/پسورد بالا — "
+            "ممکنه اون یوزر/پسورد قدیمی یا پیش‌فرض باشه و برای ورود از مرورگر کار نکنه. "
+            "اگه نشد، از پنل خودش (یا وقتی به پنل SSH داری) یه پسورد جدید ست کن."
+        )
     await message.answer("\n".join(lines))
 
 
