@@ -51,6 +51,7 @@ HELP = (
     "/diag — بررسی کامل سرور و پنل\n"
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
+    "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
     "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
     "/testtunnel — تست اتصال واقعی از سرور (بدون نیاز به گوشی)\n"
@@ -273,6 +274,53 @@ async def clients_cmd(message: Message):
                     f"{_size(t.get('total',0)) if t.get('total') else '∞'} — {state}"
                     f" — flow: {c.get('flow') or 'ندارد'}")
     await message.answer("👥 کلاینت‌ها:\n\n" + "\n".join(rows))
+
+
+@router.message(Command("mkusers"))
+async def mkusers(message: Message):
+    """One-shot bulk creation with a chosen name prefix — user1, user2, ...
+    instead of "📦 ساخت انبوه"'s timestamp-based batch prefix — delivered
+    one tap-to-copy link per message instead of a wall of plain text.
+
+    /mkusers PREFIX COUNT GB DAYS
+    """
+    if not _admin(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 5:
+        await message.answer(
+            "فرمت درست: /mkusers PREFIX COUNT GB DAYS\n"
+            "مثلاً برای ۱۰ اکانت ۲۰ گیگ ۳۰ روزه به اسم user1..user10:\n"
+            "/mkusers user 10 20 30"
+        )
+        return
+    _, prefix, count_s, gb_s, days_s = parts
+    try:
+        count, gb, days = int(count_s), int(gb_s), int(days_s)
+    except ValueError:
+        await message.answer("COUNT، GB و DAYS باید عدد باشن.")
+        return
+    if count < 1 or count > 200:
+        await message.answer("COUNT باید بین ۱ تا ۲۰۰ باشه.")
+        return
+
+    x = XUIClient()
+    await message.answer(f"⏳ در حال ساخت {count} کلاینت ({prefix}1..{prefix}{count})…")
+    created, failed = [], []
+    for i in range(count):
+        email = f"{prefix}{i + 1}"
+        try:
+            client = x.add_client(email=email, gb=gb, days=days)
+            link = x.build_vless_link(client["uuid"], email)
+            created.append((email, link))
+        except XUIError as e:
+            failed.append(f"{email}: {e}")
+
+    for email, link in created:
+        await message.answer(f"<b>{email}</b>\n<code>{link}</code>", parse_mode="HTML")
+    if failed:
+        await message.answer("❌ ناموفق:\n" + "\n".join(failed[:10]))
+    await message.answer(f"✅ تمام: {len(created)} ساخته شد، {len(failed)} ناموفق.")
 
 
 @router.message(Command("fixflow"))
