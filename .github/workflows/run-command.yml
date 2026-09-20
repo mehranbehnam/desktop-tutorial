@@ -1,0 +1,28 @@
+name: Run command on Nautilus
+
+# A general-purpose remote-execution channel: given a shell command as
+# input, runs it on Nautilus over SSH (as root, via sudo) and prints the
+# output. Manual-trigger only — nothing about this fires on a push. Exists
+# so a one-off server-side action (checking a log, fixing a stray config
+# value, restarting a stuck service) never needs a Telegram round trip;
+# it uses the same NAUTILUS_* secrets as deploy-nautilus.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Shell command to run on the server (as root)"
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run on Nautilus
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.NAUTILUS_HOST }}
+          port: ${{ secrets.NAUTILUS_PORT }}
+          username: ${{ secrets.NAUTILUS_USER }}
+          password: ${{ secrets.NAUTILUS_PASSWORD }}
+          script: |
+            sudo bash -c '${{ github.event.inputs.command }}'
