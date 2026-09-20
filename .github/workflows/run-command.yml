@@ -1,14 +1,17 @@
 name: Run command on Nautilus
 
+# A general-purpose remote-execution channel: given a shell command as
+# input, runs it on Nautilus over SSH (as root, via sudo) and prints the
+# output. Manual-trigger only — nothing about this fires on a push. Exists
+# so a one-off server-side action (checking a log, fixing a stray config
+# value, restarting a stuck service) never needs a Telegram round trip;
+# it uses the same NAUTILUS_* secrets as deploy-nautilus.yml.
 on:
-  push:
-    paths:
-      - ".github/workflows/run-command.yml"
   workflow_dispatch:
     inputs:
       command:
         description: "Shell command to run on the server (as root)"
-        required: false
+        required: true
 
 jobs:
   run:
@@ -22,5 +25,4 @@ jobs:
           username: ${{ secrets.NAUTILUS_USER }}
           password: ${{ secrets.NAUTILUS_PASSWORD }}
           script: |
-            APP=$(sudo ls -d /opt/irannewvpn-bot /opt/hermes-vpn-bot 2>/dev/null | head -1)
-            sudo grep -E '^XUI_BASE_URL=|^XUI_USERNAME=|^XUI_API_TOKEN=' "$APP/bot/.env" | sed 's/^XUI_API_TOKEN=.*/XUI_API_TOKEN=<set, hidden>/'
+            sudo bash -c '${{ github.event.inputs.command }}'
