@@ -52,6 +52,7 @@ HELP = (
     "/diag — بررسی کامل سرور و پنل\n"
     "/xuiinfo — آدرس و اطلاعات ورود پنل X-UI (فقط اینجا، خصوصی)\n"
     "/checksite domain.com — تست DNS/HTTPS یک سایت از خود سرور ایران\n"
+    "/fixdns — تنظیم DNS سرور ایران روی گوگل/کلادفلر\n"
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
@@ -134,6 +135,48 @@ async def xuiinfo(message: Message):
             "اگه نشد، از پنل خودش (یا وقتی به پنل SSH داری) یه پسورد جدید ست کن."
         )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("fixdns"))
+async def fixdns(message: Message):
+    """Point the Iran server at reliable public DNS resolvers (Google +
+    Cloudflare). Built because adliran.ir resolved fine via 8.8.8.8/1.1.1.1
+    but timed out on the server's own default resolver — its DNS setup was
+    just broken/stuck, unrelated to any site being blocked.
+
+    Handles both systemd-resolved (the Ubuntu default, where /etc/resolv.conf
+    is usually a symlink to a 127.0.0.53 stub that would silently undo a
+    direct edit) and a plain static /etc/resolv.conf.
+    """
+    if not _admin(message):
+        return
+    await message.answer("⏳ در حال تنظیم DNS سرور ایران…")
+    script = r"""
+set -e
+if [ -L /etc/resolv.conf ] && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+  mkdir -p /etc/systemd/resolved.conf.d
+  cat > /etc/systemd/resolved.conf.d/99-public-dns.conf <<'EOF'
+[Resolve]
+DNS=8.8.8.8 1.1.1.1
+FallbackDNS=8.8.4.4 1.0.0.1
+EOF
+  systemctl restart systemd-resolved
+  echo "METHOD:systemd-resolved"
+else
+  cp /etc/resolv.conf /etc/resolv.conf.bak.$(date +%s) 2>/dev/null || true
+  printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+  echo "METHOD:resolv.conf"
+fi
+"""
+    try:
+        out, err = iran_ssh.run(script, timeout=25)
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+    if "METHOD:" not in out:
+        await message.answer(f"❌ اجرا موفق نبود:\n{err.strip() or out.strip()}")
+        return
+    await message.answer(f"✅ تنظیم شد ({out.strip()}).\nحالا دوباره /checksite adliran.ir رو بزن تا مطمئن بشیم.")
 
 
 @router.message(Command("checksite"))
