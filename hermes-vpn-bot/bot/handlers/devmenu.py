@@ -653,7 +653,24 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
     except (XUIError, KeyError, TypeError) as e:
         await message.answer(f"❌ ساخت/اصلاح اینباند ناموفق: {e}")
         return
-    await message.answer(f"✅ اینباند آماده شد (id={new_id}, پورت 2053, مسیر {ws_path}).")
+    fw_msg = f"✅ اینباند آماده شد (id={new_id}, پورت 2053, مسیر {ws_path})."
+    # Same bug that bit the Reality port change: Xray can be listening fine,
+    # but if ufw never got a rule for this port, Cloudflare's edge reaches
+    # the origin IP and gets silently dropped — the local 127.0.0.1 TLS
+    # test bypasses ufw entirely (loopback), so it looks fine while the
+    # real public path is dead. That's exactly "Connected, 0 bytes".
+    if iran_ssh.configured():
+        try:
+            out, _ = iran_ssh.run("sudo ufw allow 2053/tcp && echo UFW_OK")
+            if "UFW_OK" in out:
+                fw_msg += "\n✅ پورت 2053/tcp تو فایروال (ufw) سرور ایران هم باز شد."
+            else:
+                fw_msg += f"\n⚠️ باز کردن پورت تو ufw نامشخص موند:\n{out}"
+        except iran_ssh.IranSSHError as e:
+            fw_msg += f"\n⚠️ نتونستم فایروال ایران رو خودکار باز کنم ({e}) — با 🧱 وضعیت فایروال سرور ایران چک کن."
+    else:
+        fw_msg += "\n⚠️ SSH سرور ایران تنظیم نیست — اگه پورت 2053 تو فایروال بسته باشه، دستی باز کن."
+    await message.answer(fw_msg)
 
     # Unique every run — re-running this for the same subdomain (e.g. to
     # pick up a config fix) would otherwise collide with the previous
