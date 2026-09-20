@@ -48,7 +48,7 @@ FILES="bot/config.py bot/db.py bot/keyboards.py bot/main.py bot/devbot_main.py b
 bot/handlers/__init__.py bot/handlers/admin.py bot/handlers/buy.py bot/handlers/renew.py
 bot/handlers/start.py bot/handlers/status.py bot/handlers/trial.py
 bot/handlers/ops.py bot/handlers/devmenu.py
-bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py bot/utils/cloudflare.py server/test_client.py"
+bot/utils/__init__.py bot/utils/pricing.py bot/utils/delivery.py bot/utils/x25519.py bot/utils/tunnel_test.py bot/utils/iran_ssh.py bot/utils/cloudflare.py bot/utils/envfile.py server/test_client.py"
 
 # Unauthenticated Contents API requests are capped at 60/hour — easy to
 # blow through during a debugging session with several runs in a row. Any

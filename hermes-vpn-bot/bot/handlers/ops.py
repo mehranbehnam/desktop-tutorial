@@ -7,6 +7,7 @@ import email.utils
 import json
 import os
 import logging
+import subprocess
 import time
 
 from aiogram import Router
@@ -14,6 +15,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 import config
+from utils.envfile import env_path, service_names, set_env_var
 from utils.x25519 import public_from_private
 from xui_client import XUIClient, XUIError
 
@@ -54,6 +56,7 @@ HELP = (
     "/testtunnel — تست اتصال واقعی از سرور (بدون نیاز به گوشی)\n"
     "/restartxray — ری‌استارت هسته‌ی Xray\n"
     "/update — دریافت آخرین نسخه‌ی کد و ری‌استارت\n"
+    "/setenv KEY=VALUE — تنظیم هر متغیر .env در یک پیام\n"
     "/whoami — کدام پردازش دارد جواب می‌دهد (تشخیص پردازش‌های تکراری)\n"
     "/ops — همین راهنما"
 )
@@ -388,7 +391,7 @@ FILES = [
     "bot/handlers/trial.py", "bot/handlers/ops.py", "bot/handlers/devmenu.py",
     "bot/utils/__init__.py", "bot/utils/pricing.py", "bot/utils/delivery.py",
     "bot/utils/x25519.py", "bot/utils/tunnel_test.py", "bot/utils/iran_ssh.py",
-    "bot/utils/cloudflare.py",
+    "bot/utils/cloudflare.py", "bot/utils/envfile.py",
     "bot/requirements.txt",
 ]
 
@@ -471,6 +474,35 @@ async def update(message: Message):
     subprocess.Popen(["systemctl", "restart", service])
     subprocess.Popen(["systemctl", "restart", f"{service}-dev"],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@router.message(Command("setenv"))
+async def setenv(message: Message):
+    """Set any .env value in one message — no menu navigation. The specific
+    flows elsewhere (Cloudflare/GitHub tokens, card number, Iran SSH) exist
+    because those are worth validating on the spot (a bad token or wrong
+    password gets caught immediately); anything else, including a value
+    that doesn't have its own flow yet, can just be typed here directly:
+
+    /setenv KEY=VALUE
+    """
+    if not _admin(message):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or "=" not in parts[1]:
+        await message.answer("فرمت درست: /setenv KEY=VALUE\nمثلاً: /setenv CARD_NUMBER=1234 5678 9012 3456")
+        return
+    key, value = parts[1].split("=", 1)
+    key, value = key.strip(), value.strip()
+    if not key or not key.replace("_", "").isalnum() or not key[0].isalpha():
+        await message.answer("اسم متغیر نامعتبره — فقط حروف/عدد/آندرلاین، باید با حرف شروع بشه.")
+        return
+
+    set_env_var(env_path(), key, value)
+    await message.answer(f"✅ {key} ذخیره شد. هر دو ربات ری‌استارت می‌شن…")
+    sales, dev = service_names()
+    subprocess.Popen(["systemctl", "restart", sales])
+    subprocess.Popen(["systemctl", "restart", dev], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 @router.message(Command("testtunnel"))

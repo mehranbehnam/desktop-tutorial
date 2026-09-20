@@ -50,6 +50,7 @@ import db
 from handlers import ops
 from keyboards import admin_review_keyboard
 from utils import iran_ssh
+from utils.envfile import env_path as _env_path, service_names as _service_names, set_env_var as _set_env_var
 from xui_client import XUIClient, XUIError
 
 router = Router()
@@ -65,36 +66,6 @@ def _admin(message: Message) -> bool:
 
 def _size(n: int) -> str:
     return f"{n / 1024**3:.2f}GB" if n >= 1024**3 else f"{n / 1024**2:.0f}MB"
-
-
-def _env_path() -> str:
-    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(bot_dir, ".env")
-
-
-def _service_names() -> tuple[str, str]:
-    """(sales-bot service, dev-bot service) — matches setup_iran_vpn.sh's `${SVC}-dev` naming."""
-    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    install_dir = os.path.dirname(bot_dir)
-    service = os.path.basename(install_dir)
-    return service, f"{service}-dev"
-
-
-def _set_env_var(env_path: str, key: str, value: str):
-    lines = []
-    if os.path.isfile(env_path):
-        with open(env_path) as fh:
-            lines = fh.readlines()
-    found = False
-    for i, line in enumerate(lines):
-        if line.startswith(f"{key}="):
-            lines[i] = f"{key}={value}\n"
-            found = True
-            break
-    if not found:
-        lines.append(f"{key}={value}\n")
-    with open(env_path, "w") as fh:
-        fh.writelines(lines)
 
 
 def _list_clients(x: XUIClient) -> list[dict]:
