@@ -13,9 +13,7 @@ SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@your_support")
 BOT_NAME = os.getenv("BOT_NAME", "VPN Store")
 
 # Real business bank card — set via .env, or the bot's own "💳 تنظیم شماره
-# کارت" flow (which just writes .env). Never hardcoded here: this file is
-# tracked in git, and even non-secret-but-real business data doesn't belong
-# in permanent, public history.
+# کارت" flow (which just writes .env).
 CARD_NUMBER = os.getenv("CARD_NUMBER", "0000-0000-0000-0000")
 CARD_OWNER = os.getenv("CARD_OWNER", "SET CARD_OWNER IN .env")
 CURRENCY_LABEL = os.getenv("CURRENCY_LABEL", "لیر")
