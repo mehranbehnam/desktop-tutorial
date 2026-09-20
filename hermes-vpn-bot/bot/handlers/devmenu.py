@@ -680,6 +680,15 @@ async def _do_ws_tls_setup(message: Message, subdomain: str):
         x._request("POST", "/panel/api/server/restartXrayService")
         client = x.add_client(email=test_email, days=1, inbound_id=new_id)
         link = x.build_vless_link(client["uuid"], test_email)
+        # The panel always renders links against XUI_PUBLIC_HOST (the raw
+        # origin IP) — right for Reality, wrong here: this inbound's whole
+        # point is that the client connects to the Cloudflare-fronted
+        # *hostname*, so DNS resolution routes it through Cloudflare's edge
+        # instead of straight at the origin IP. Left as the IP, the client
+        # connects directly to a known VPN server IP with no CDN in the
+        # path at all — indistinguishable from Reality's own "connected,
+        # 0 bytes" once an ISP blocks that IP by DPI/reputation.
+        link = link.replace(f"@{origin_ip}:2053", f"@{hostname}:2053", 1)
     except XUIError as e:
         await message.answer(f"⚠️ اینباند ساخته شد ولی ساخت کلاینت تست ناموفق بود: {e}")
         return
