@@ -1326,6 +1326,37 @@ async def _do_broadcast(message: Message, text: str):
 
 
 # ---------------------------------------------------------------- new: single client create/lookup/increase
+# GB/days are picked with inline buttons (a "سرویس با دکمه" flow) instead of
+# always typing a number — the "✏️ مقدار دلخواه" button falls back to the
+# original free-text stage for anything not on the quick list.
+
+_GB_CHOICES = [10, 20, 30, 50, 100, 0]
+_DAYS_CHOICES = [7, 30, 60, 90, 180, 365, 0]
+
+
+def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int) -> list[list[InlineKeyboardButton]]:
+    return [buttons[i:i + size] for i in range(0, len(buttons), size)]
+
+
+def _gb_options_keyboard(cb_prefix: str) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(text=("نامحدود ♾" if v == 0 else f"{v} گیگ"), callback_data=f"{cb_prefix}:gb:{v}")
+        for v in _GB_CHOICES
+    ]
+    rows = _chunk_buttons(buttons, 3)
+    rows.append([InlineKeyboardButton(text="✏️ مقدار دلخواه", callback_data=f"{cb_prefix}:gb:custom")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _days_options_keyboard(cb_prefix: str) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(text=("بدون انقضا ♾" if v == 0 else f"{v} روز"), callback_data=f"{cb_prefix}:days:{v}")
+        for v in _DAYS_CHOICES
+    ]
+    rows = _chunk_buttons(buttons, 3)
+    rows.append([InlineKeyboardButton(text="✏️ مقدار دلخواه", callback_data=f"{cb_prefix}:days:custom")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 @router.message(F.text == "🆕 کلاینت جدید")
 async def ask_new_client(message: Message):
@@ -1342,7 +1373,8 @@ async def _new_client_step(message: Message, pending: dict):
         pending["email"] = text
         pending["stage"] = "gb"
         _pending[message.from_user.id] = pending
-        await message.answer("چند گیگ؟ (0 = نامحدود)")
+        await message.answer("چند گیگ؟ یکی از دکمه‌ها رو بزن، یا عدد دلخواه رو همینجا تایپ کن:",
+                              reply_markup=_gb_options_keyboard("devnc"))
         return
     if stage == "gb":
         try:
@@ -1352,7 +1384,8 @@ async def _new_client_step(message: Message, pending: dict):
             return
         pending["stage"] = "days"
         _pending[message.from_user.id] = pending
-        await message.answer("چند روز؟ (0 = بدون انقضا)")
+        await message.answer("چند روز؟ یکی از دکمه‌ها رو بزن، یا عدد دلخواه رو همینجا تایپ کن:",
+                              reply_markup=_days_options_keyboard("devnc"))
         return
     if stage == "days":
         try:
@@ -1362,6 +1395,50 @@ async def _new_client_step(message: Message, pending: dict):
             return
         _pending.pop(message.from_user.id, None)
         await _create_client(message, pending["email"], pending["gb"], days)
+
+
+@router.callback_query(F.data.startswith("devnc:gb:"))
+async def new_client_gb_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    pending = _pending.get(callback.from_user.id)
+    if not pending or pending.get("action") != "new_client" or pending.get("stage") != "gb":
+        await callback.answer("این مرحله دیگه معتبر نیست — از 🆕 کلاینت جدید دوباره شروع کن.", show_alert=True)
+        return
+    value = callback.data.split(":", 2)[2]
+    if value == "custom":
+        await callback.answer()
+        await callback.message.answer("عدد گیگ دلخواه رو تایپ کن:")
+        return
+    pending["gb"] = int(value)
+    pending["stage"] = "days"
+    _pending[callback.from_user.id] = pending
+    gb_label = "نامحدود ♾" if pending["gb"] == 0 else f"{pending['gb']} گیگ"
+    await callback.answer(f"حجم: {gb_label}")
+    await callback.message.edit_text(f"✅ حجم: {gb_label}\n\nحالا چند روز؟",
+                                      reply_markup=_days_options_keyboard("devnc"))
+
+
+@router.callback_query(F.data.startswith("devnc:days:"))
+async def new_client_days_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    pending = _pending.get(callback.from_user.id)
+    if not pending or pending.get("action") != "new_client" or pending.get("stage") != "days":
+        await callback.answer("این مرحله دیگه معتبر نیست — از 🆕 کلاینت جدید دوباره شروع کن.", show_alert=True)
+        return
+    value = callback.data.split(":", 2)[2]
+    if value == "custom":
+        await callback.answer()
+        await callback.message.answer("تعداد روز دلخواه رو تایپ کن:")
+        return
+    days = int(value)
+    _pending.pop(callback.from_user.id, None)
+    await callback.answer()
+    await callback.message.edit_text(f"⏳ در حال ساخت کلاینت {pending['email']}…")
+    await _create_client(callback.message, pending["email"], pending["gb"], days)
 
 
 async def _create_client(message: Message, email: str, gb: int, days: int):
@@ -1398,7 +1475,8 @@ async def _bulk_create_step(message: Message, pending: dict):
         pending["count"] = count
         pending["stage"] = "gb"
         _pending[message.from_user.id] = pending
-        await message.answer("هر کلاینت چند گیگ؟ (0 = نامحدود)")
+        await message.answer("هر کلاینت چند گیگ؟ یکی از دکمه‌ها رو بزن، یا عدد دلخواه رو تایپ کن:",
+                              reply_markup=_gb_options_keyboard("devbulk"))
         return
     if stage == "gb":
         try:
@@ -1408,7 +1486,8 @@ async def _bulk_create_step(message: Message, pending: dict):
             return
         pending["stage"] = "days"
         _pending[message.from_user.id] = pending
-        await message.answer("هر کلاینت چند روز؟ (0 = بدون انقضا)")
+        await message.answer("هر کلاینت چند روز؟ یکی از دکمه‌ها رو بزن، یا عدد دلخواه رو تایپ کن:",
+                              reply_markup=_days_options_keyboard("devbulk"))
         return
     if stage == "days":
         try:
@@ -1418,6 +1497,50 @@ async def _bulk_create_step(message: Message, pending: dict):
             return
         _pending.pop(message.from_user.id, None)
         await _do_bulk_create(message, pending["count"], pending["gb"], days)
+
+
+@router.callback_query(F.data.startswith("devbulk:gb:"))
+async def bulk_create_gb_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    pending = _pending.get(callback.from_user.id)
+    if not pending or pending.get("action") != "bulk_create" or pending.get("stage") != "gb":
+        await callback.answer("این مرحله دیگه معتبر نیست — از 📦 ساخت انبوه دوباره شروع کن.", show_alert=True)
+        return
+    value = callback.data.split(":", 2)[2]
+    if value == "custom":
+        await callback.answer()
+        await callback.message.answer("عدد گیگ دلخواه رو تایپ کن:")
+        return
+    pending["gb"] = int(value)
+    pending["stage"] = "days"
+    _pending[callback.from_user.id] = pending
+    gb_label = "نامحدود ♾" if pending["gb"] == 0 else f"{pending['gb']} گیگ"
+    await callback.answer(f"حجم: {gb_label}")
+    await callback.message.edit_text(f"✅ حجم هر کلاینت: {gb_label}\n\nحالا چند روز؟",
+                                      reply_markup=_days_options_keyboard("devbulk"))
+
+
+@router.callback_query(F.data.startswith("devbulk:days:"))
+async def bulk_create_days_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    pending = _pending.get(callback.from_user.id)
+    if not pending or pending.get("action") != "bulk_create" or pending.get("stage") != "days":
+        await callback.answer("این مرحله دیگه معتبر نیست — از 📦 ساخت انبوه دوباره شروع کن.", show_alert=True)
+        return
+    value = callback.data.split(":", 2)[2]
+    if value == "custom":
+        await callback.answer()
+        await callback.message.answer("تعداد روز دلخواه رو تایپ کن:")
+        return
+    days = int(value)
+    _pending.pop(callback.from_user.id, None)
+    await callback.answer()
+    await callback.message.edit_text(f"⏳ در حال ساخت {pending['count']} کلاینت…")
+    await _do_bulk_create(callback.message, pending["count"], pending["gb"], days)
 
 
 async def _do_bulk_create(message: Message, count: int, gb: int, days: int):
