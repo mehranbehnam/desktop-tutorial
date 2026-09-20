@@ -15,6 +15,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 import config
+from utils import iran_ssh
 from utils.envfile import env_path, service_names, set_env_var
 from utils.x25519 import public_from_private
 from xui_client import XUIClient, XUIError
@@ -50,6 +51,7 @@ HELP = (
     "🛠 دستورهای مدیریت:\n\n"
     "/diag — بررسی کامل سرور و پنل\n"
     "/xuiinfo — آدرس و اطلاعات ورود پنل X-UI (فقط اینجا، خصوصی)\n"
+    "/checksite domain.com — تست DNS/HTTPS یک سایت از خود سرور ایران\n"
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
@@ -132,6 +134,43 @@ async def xuiinfo(message: Message):
             "اگه نشد، از پنل خودش (یا وقتی به پنل SSH داری) یه پسورد جدید ست کن."
         )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("checksite"))
+async def checksite(message: Message):
+    """Test reachability of an arbitrary site *from the Iran server itself*
+    — the one test a phone behind the VPN can't substitute for, since it
+    isolates whether the destination site is reachable at all from that
+    server's network position, separate from anything about the client's
+    own tunnel/app.
+
+    /checksite domain.com
+    """
+    if not _admin(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("فرمت درست: /checksite domain.com")
+        return
+    domain = parts[1].strip().removeprefix("http://").removeprefix("https://").split("/")[0]
+
+    await message.answer(f"⏳ در حال تست {domain} از خود سرور ایران…")
+    try:
+        dns_out, _ = iran_ssh.run(f"getent hosts {domain} || echo NO_DNS", timeout=15)
+        curl_out, _ = iran_ssh.run(
+            f"curl -sS -o /dev/null -w 'HTTP:%{{http_code}} TIME:%{{time_total}}s\\n' "
+            f"--max-time 12 -A 'Mozilla/5.0' https://{domain}/ 2>&1 || echo CURL_FAILED",
+            timeout=20,
+        )
+    except iran_ssh.IranSSHError as e:
+        await message.answer(f"❌ {e}")
+        return
+
+    await message.answer(
+        f"🔎 نتیجه‌ی تست {domain} از سرور ایران:\n\n"
+        f"DNS:\n{dns_out.strip() or '(خالی)'}\n\n"
+        f"HTTPS:\n{curl_out.strip() or '(خالی)'}"
+    )
 
 
 @router.message(Command("diag"))
