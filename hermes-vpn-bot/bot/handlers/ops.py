@@ -52,6 +52,7 @@ HELP = (
     "/liveconfig — مقایسه‌ی کانفیگ واقعیِ در حال اجرای Xray با چیزی که پنل نشون می‌ده\n"
     "/clients — فهرست کلاینت‌ها و وضعیتشان\n"
     "/mkusers PREFIX COUNT GB DAYS — ساخت انبوه با اسم دلخواه (user1..userN)\n"
+    "/rmusers PREFIX COUNT — حذف انبوه با همون اسم‌ها\n"
     "/fixflow — اصلاح flow همه‌ی کلاینت‌های قدیمی\n"
     "/fixkeys — بازتولید کلید Reality وقتی جفت نیست\n"
     "/testtunnel — تست اتصال واقعی از سرور (بدون نیاز به گوشی)\n"
@@ -321,6 +322,49 @@ async def mkusers(message: Message):
     if failed:
         await message.answer("❌ ناموفق:\n" + "\n".join(failed[:10]))
     await message.answer(f"✅ تمام: {len(created)} ساخته شد، {len(failed)} ناموفق.")
+
+
+@router.message(Command("rmusers"))
+async def rmusers(message: Message):
+    """Bulk-delete the counterpart to /mkusers — same PREFIX+COUNT naming,
+    so a batch made on the wrong inbound (or just for testing) can be
+    cleared before remaking it.
+
+    /rmusers PREFIX COUNT
+    """
+    if not _admin(message):
+        return
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer(
+            "فرمت درست: /rmusers PREFIX COUNT\n"
+            "مثلاً برای حذف user1..user10:\n"
+            "/rmusers user 10"
+        )
+        return
+    _, prefix, count_s = parts
+    try:
+        count = int(count_s)
+    except ValueError:
+        await message.answer("COUNT باید عدد باشه.")
+        return
+    if count < 1 or count > 200:
+        await message.answer("COUNT باید بین ۱ تا ۲۰۰ باشه.")
+        return
+
+    x = XUIClient()
+    deleted, failed = [], []
+    for i in range(count):
+        email = f"{prefix}{i + 1}"
+        try:
+            x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
+            deleted.append(email)
+        except XUIError as e:
+            failed.append(f"{email}: {e}")
+
+    await message.answer(f"✅ {len(deleted)} کلاینت حذف شد" + (f"، {len(failed)} ناموفق." if failed else "."))
+    if failed:
+        await message.answer("❌ ناموفق:\n" + "\n".join(failed[:10]))
 
 
 @router.message(Command("fixflow"))
