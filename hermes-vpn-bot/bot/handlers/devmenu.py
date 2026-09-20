@@ -38,6 +38,8 @@ from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -46,6 +48,7 @@ from aiogram.types import (
 import config
 import db
 from handlers import ops
+from keyboards import admin_review_keyboard
 from utils import iran_ssh
 from xui_client import XUIClient, XUIError
 
@@ -181,6 +184,7 @@ MENU_FINANCE = ReplyKeyboardMarkup(
         [KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="📊 گزارش مالی")],
         [KeyboardButton(text="🧾 سفارش‌های اخیر"), KeyboardButton(text="📢 پیام همگانی")],
         [KeyboardButton(text="💳 تنظیم شماره کارت")],
+        [KeyboardButton(text="📤 سفارش‌های معطل"), KeyboardButton(text="⚙️ تنظیمات پرداخت خودکار")],
         [KeyboardButton(text=BACK)],
     ],
     resize_keyboard=True,
@@ -1271,6 +1275,65 @@ async def recent_orders_cmd(message: Message):
     for o in orders:
         lines.append(f"#{o['id']} — {o['plan_key']} — {o['amount']:,} {config.CURRENCY_LABEL} — {o['status']} — tg:{o['tg_id']}")
     await message.answer("🧾 ۱۰ سفارش اخیر:\n\n" + "\n".join(lines))
+
+
+@router.message(F.text == "📤 سفارش‌های معطل")
+async def pending_orders_cmd(message: Message):
+    """Emergency manual path that stays available even with auto-approve
+    on — every order still awaiting a review, each with the same
+    approve/reject buttons the receipt-photo notification sends, so
+    nothing is stuck waiting if the automatic (bank-SMS) route misses it."""
+    if not _admin(message):
+        return
+    orders = db.pending_orders(20)
+    if not orders:
+        await message.answer("هیچ سفارش معطلی نیست ✅ همه‌چیز تسویه‌ست.")
+        return
+    await message.answer(f"{len(orders)} سفارش معطل:")
+    now = int(time.time())
+    for o in orders:
+        mins = (now - o["created_at"]) // 60
+        kind = f"تمدید «{o['renew_target_email']}»" if o["renew_target_email"] else o["plan_key"]
+        await message.answer(
+            f"سفارش #{o['id']} — tg:{o['tg_id']}\n"
+            f"{kind} — {o['amount']:,} {config.CURRENCY_LABEL}\n"
+            f"{mins} دقیقه پیش ثبت شده",
+            reply_markup=admin_review_keyboard(o["id"]),
+        )
+
+
+@router.message(F.text == "⚙️ تنظیمات پرداخت خودکار")
+async def auto_approve_settings(message: Message):
+    if not _admin(message):
+        return
+    await message.answer(_auto_approve_text(), reply_markup=_auto_approve_keyboard())
+
+
+def _auto_approve_text() -> str:
+    state = "خودکار" if db.auto_approve_enabled() else "دستی"
+    return (
+        f"حالت فعلی تأیید پرداخت: {state}\n\n"
+        "خودکار: واریز شناسایی‌شده (از طریق پیامک بانک) بلافاصله خودش تأیید و فعال می‌شه.\n"
+        "دستی: فقط بهت خبر می‌ده، تأیید نهایی با خودته."
+    )
+
+
+def _auto_approve_keyboard():
+    on = db.auto_approve_enabled()
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=("✅ " if on else "") + "خودکار", callback_data="autoset:1"),
+        InlineKeyboardButton(text=("✅ " if not on else "") + "دستی", callback_data="autoset:0"),
+    ]])
+
+
+@router.callback_query(F.data.startswith("autoset:"))
+async def auto_approve_set(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    db.set_setting("auto_approve", callback.data.split(":", 1)[1])
+    await callback.message.edit_text(_auto_approve_text(), reply_markup=_auto_approve_keyboard())
+    await callback.answer()
 
 
 # ---------------------------------------------------------------- new: broadcast

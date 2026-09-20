@@ -222,6 +222,25 @@ class XUIClient:
         netloc = f"{host}:{port}" if port and str(port) not in ("80", "443") else host
         return f"{scheme}://{netloc}{path if path.startswith('/') else '/' + path}{sub_id}"
 
+    def get_online_emails(self) -> set[str]:
+        """Best-effort live online-client list from the panel's own onlines
+        endpoint. Panel versions differ in whether/how they expose this, so
+        any failure just means no account shows as online — never an error
+        surfaced to whoever's checking their status."""
+        try:
+            obj = self._request("POST", "/panel/api/inbounds/onlines")
+        except XUIError:
+            return set()
+        if not obj:
+            return set()
+        emails = set()
+        for item in obj:
+            if isinstance(item, str):
+                emails.add(item)
+            elif isinstance(item, dict) and item.get("email"):
+                emails.add(item["email"])
+        return emails
+
     def build_vless_link(self, client_uuid: str, email: str, remark: str = "") -> str:
         """Return the client's connection URL as the panel renders it.
 

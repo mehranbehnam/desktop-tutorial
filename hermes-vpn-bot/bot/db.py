@@ -34,6 +34,17 @@ CREATE TABLE IF NOT EXISTS clients (
     expiry_time INTEGER,
     created_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS client_labels (
+    xui_email TEXT PRIMARY KEY,
+    label TEXT,
+    updated_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -161,6 +172,53 @@ def recent_orders(limit: int = 10):
         return conn.execute(
             "SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
+
+
+def pending_orders(limit: int = 20):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE status='awaiting_review' ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+
+def get_labels(emails: list[str]) -> dict[str, str]:
+    """xui_email -> custom label, for whichever of `emails` have one set."""
+    if not emails:
+        return {}
+    with get_conn() as conn:
+        q = ",".join("?" for _ in emails)
+        rows = conn.execute(
+            f"SELECT xui_email, label FROM client_labels WHERE xui_email IN ({q})", emails
+        ).fetchall()
+        return {r["xui_email"]: r["label"] for r in rows}
+
+
+def set_label(email: str, label: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO client_labels (xui_email, label, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(xui_email) DO UPDATE SET label=excluded.label, updated_at=excluded.updated_at",
+            (email, label, int(time.time())),
+        )
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
+def auto_approve_enabled() -> bool:
+    return get_setting("auto_approve", "0") == "1"
 
 
 def stats() -> dict:
