@@ -47,6 +47,11 @@ async def diag_commands(message: Message, bot: Bot):
     age = time.time() - _LOADED_AT
     lines = [f"PID این پردازش: {_PID}", f"{age:.0f} ثانیه پیش بالا اومده"]
     try:
+        me = await bot.get_me()
+        lines.append(f"هویت واقعی این توکن: @{me.username} (id: {me.id})")
+    except Exception as e:
+        lines.append(f"get_me ناموفق: {e}")
+    try:
         out = subprocess.run(["pgrep", "-af", "bot/main.py"], capture_output=True, text=True, timeout=5).stdout
 
         def _is_python_proc(line: str) -> bool:
