@@ -1,11 +1,11 @@
 """Deliver a service to a user as one package: link, subscription, QR.
 
-Every delivered link is paired with the client app so a customer never has
-to manually paste anything: "⬇️ دانلود نرم‌افزار" gets them the app if they
-don't have it yet, and "📎 اتصال خودکار" opens it with this exact config
-already imported — tap Connect and done. The raw links stay visible too
-(as tap-to-copy code blocks) for anyone who wants to paste them elsewhere
-or into a different client.
+Every delivered link ends with one single "📎 اتصال به نرم‌افزار" link —
+hermesvpn://import?url=... — that opens the client app with this exact
+config already imported (tap Connect and done) if it's installed, or does
+nothing if it isn't. The raw links stay visible too (as tap-to-copy code
+blocks) for anyone who wants to paste them elsewhere, into a different
+client, or to grab the APK separately.
 """
 import io
 from urllib.parse import quote
@@ -40,17 +40,14 @@ def build_caption(email: str, link: str, sub_url: str = "", header: str = "") ->
     parts = []
     if header:
         parts.append(header + "\n")
-    parts.append(f"📦 اکانت «{escape_markdown(email)}» — بعد از نصب {config.APP_NAME} روی دکمه‌ی «📎 اتصال خودکار» بزن.")
+    parts.append(f"📦 اکانت «{escape_markdown(email)}» — بعد از نصب {config.APP_NAME} روی لینک پایین بزن.")
     parts.append("\n🔗 لینک اتصال (بزن تا کپی بشه):\n`" + link + "`")
     if sub_url:
         parts.append(
             "\n📡 لینک اشتراک/ساب (بزن تا کپی بشه):\n`" + sub_url + "`"
             "\n_با این لینک، سرویس در برنامه خودکار به‌روز می‌شود._"
         )
-    parts.append(
-        f"\n⬇️ [دانلود {config.APP_NAME}]({config.APP_DOWNLOAD_URL})"
-        f"   |   📎 [اتصال خودکار به نرم‌افزار]({app_connect_link(link)})"
-    )
+    parts.append(f"\n📎 [اتصال به نرم‌افزار]({app_connect_link(link)})")
     parts.append("\n📱 یا کد QR بالا را در v2rayNG / NekoBox / Streisand اسکن کن.")
     return "\n".join(parts)
 
