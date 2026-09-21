@@ -452,11 +452,8 @@ async def cancel(message: Message):
         await message.answer("لغو شد.")
 
 
-def _detail_keyboard(email: str, enabled: bool, link: str = "") -> InlineKeyboardMarkup:
-    rows = []
-    if link:
-        rows.append([InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))])
-    rows += [
+def _detail_keyboard(email: str, enabled: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="🔓 فعال کن" if not enabled else "🔒 مسدود کن",
             callback_data=f"cl:togask:{email}",
@@ -467,8 +464,7 @@ def _detail_keyboard(email: str, enabled: bool, link: str = "") -> InlineKeyboar
          InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")],
         [InlineKeyboardButton(text=f"⬇️ دانلود {config.APP_NAME}", url=config.APP_DOWNLOAD_URL)],
         [InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    ])
 
 
 @router.callback_query(F.data.startswith("cl:refresh:"))
@@ -622,10 +618,15 @@ async def show_detail(message: Message, email: str):
     if sub_url:
         lines.append(f"لینک اشتراک:\n{sub_url}")
 
-    link = x.build_vless_link(t["uuid"], email) if t.get("uuid") else ""
+    if t.get("uuid"):
+        # Text link, not a button: Telegram rejected the hermesvpn:// scheme
+        # as a button URL (BUTTON_URL_INVALID). An <a href> in the text
+        # itself is safe with any scheme.
+        link = x.build_vless_link(t["uuid"], email)
+        lines.append(f'\n📎 <a href="{app_connect_link(link)}">اتصال به {config.APP_NAME}</a>')
 
     if not db.has_approved_order(email):
         lines.append("")
         lines.append("خریدی ثبت نشده (احتمالاً دستی ساخته شده).")
 
-    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, enabled, link), parse_mode="HTML")
+    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, enabled), parse_mode="HTML")

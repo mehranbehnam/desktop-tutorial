@@ -148,6 +148,22 @@ async def receive_receipt(message: Message, bot: Bot):
     await message.answer("رسید شما دریافت شد و برای بررسی ارسال شد. لطفاً چند دقیقه صبر کن.")
 
 
+def _get_or_create_client(xui: XUIClient, email: str, gb: int, days: int) -> dict:
+    """add_client, but safe to retry: if a previous attempt got the XUI
+    client created and only failed afterward (e.g. delivery), a retry must
+    not die on "email already in use" — it should just pick up that
+    existing client instead."""
+    try:
+        return xui.add_client(email=email, gb=gb, days=days)
+    except XUIError as e:
+        if "already in use" not in str(e).lower():
+            raise
+        existing = xui.get_client_traffic(email)
+        if not existing or not existing.get("uuid"):
+            raise
+        return {"uuid": existing["uuid"], "expiry_time": existing.get("expiryTime", 0)}
+
+
 async def provision_order(bot: Bot, order_id: int) -> tuple[bool, str]:
     """Do the actual XUI provisioning + delivery for an approved order.
 
@@ -191,7 +207,7 @@ async def provision_order(bot: Bot, order_id: int) -> tuple[bool, str]:
             for i in range(quantity):
                 email = (f"user{order['tg_id']}-order{order_id}-{i+1}" if quantity > 1
                          else f"user{order['tg_id']}-order{order_id}")
-                client = xui.add_client(email=email, gb=order["gb"], days=order["days"])
+                client = _get_or_create_client(xui, email, order["gb"], order["days"])
                 db.save_client(email, order["tg_id"], client["uuid"], order["gb"], client["expiry_time"])
                 link = xui.build_vless_link(client["uuid"], email)
                 sub_url = xui.get_sub_url(email)
@@ -222,9 +238,12 @@ async def approve_order(callback: CallbackQuery, bot: Bot):
     if not ok:
         await callback.answer(detail, show_alert=True)
         if detail not in ("سفارش پیدا نشد", "این سفارش قبلاً پردازش شده"):
-            await callback.message.edit_caption(
-                caption=(callback.message.caption or "")
-                + f"\n\n⚠️ خطا در ساخت اکانت روی پنل — دستی بررسی کن.\n{detail}"
+            # A new message, never appended to the receipt caption: photo
+            # captions cap at 1024 chars, and repeated retries appending to
+            # it eventually overflow into a MESSAGE_TOO_LONG that blocks
+            # even seeing the error, let alone retrying again.
+            await callback.message.answer(
+                f"⚠️ خطا در ساخت اکانت سفارش #{order_id} — دستی بررسی کن.\n{detail}"
             )
         return
 

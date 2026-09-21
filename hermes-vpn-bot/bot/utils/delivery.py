@@ -11,7 +11,7 @@ import io
 from urllib.parse import quote
 
 import qrcode
-from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, Message
 
 import config
 
@@ -20,16 +20,6 @@ def app_connect_link(link: str) -> str:
     """Deep link into the client app (see android's intent-filter for the
     "hermesvpn" scheme) that auto-imports `link` as the active config."""
     return f"hermesvpn://import?url={quote(link, safe='')}"
-
-
-def connect_keyboard(link: str) -> InlineKeyboardMarkup:
-    """The single "📎 اتصال به نرم‌افزار" button under a delivered link —
-    an actual button, not a text link, matching the reference layout.
-    Doesn't touch the persistent bottom menu keyboard: an inline keyboard
-    is a separate UI layer in Telegram, attached to just this message."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))
-    ]])
 
 
 def escape_markdown(text: str) -> str:

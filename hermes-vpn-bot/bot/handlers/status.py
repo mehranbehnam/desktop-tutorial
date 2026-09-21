@@ -169,12 +169,16 @@ async def status_view(callback: CallbackQuery):
         sub_url = ""
     if sub_url:
         lines.append(f"لینک اشتراک:\n{sub_url}")
+    if match["uuid"]:
+        # Text link, not a button: Telegram rejected the hermesvpn:// scheme
+        # as a button URL (BUTTON_URL_INVALID), which broke delivery
+        # entirely when it happened mid-provision. A Markdown link in the
+        # text itself is safe with any scheme.
+        link = xui.build_vless_link(match["uuid"], email)
+        lines.append(f"\n📎 [اتصال به نرم‌افزار]({app_connect_link(link)})")
     text = "\n".join(lines)
 
     rows = []
-    if match["uuid"]:
-        link = xui.build_vless_link(match["uuid"], email)
-        rows.append([InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))])
     rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"renewpick:{email}")])
     rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"acc:link:{email}"),
                  InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"acc:rename:{email}")])
