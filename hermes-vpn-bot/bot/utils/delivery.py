@@ -11,7 +11,7 @@ import io
 from urllib.parse import quote
 
 import qrcode
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config
 
@@ -20,6 +20,16 @@ def app_connect_link(link: str) -> str:
     """Deep link into the client app (see android's intent-filter for the
     "hermesvpn" scheme) that auto-imports `link` as the active config."""
     return f"hermesvpn://import?url={quote(link, safe='')}"
+
+
+def connect_keyboard(link: str) -> InlineKeyboardMarkup:
+    """The single "📎 اتصال به نرم‌افزار" button under a delivered link —
+    an actual button, not a text link, matching the reference layout.
+    Doesn't touch the persistent bottom menu keyboard: an inline keyboard
+    is a separate UI layer in Telegram, attached to just this message."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))
+    ]])
 
 
 def escape_markdown(text: str) -> str:
@@ -47,7 +57,6 @@ def build_caption(email: str, link: str, sub_url: str = "", header: str = "") ->
             "\n📡 لینک اشتراک/ساب (بزن تا کپی بشه):\n`" + sub_url + "`"
             "\n_با این لینک، سرویس در برنامه خودکار به‌روز می‌شود._"
         )
-    parts.append(f"\n📎 [اتصال به نرم‌افزار]({app_connect_link(link)})")
     parts.append("\n📱 یا کد QR بالا را در v2rayNG / NekoBox / Streisand اسکن کن.")
     return "\n".join(parts)
 
@@ -68,28 +77,24 @@ async def send_service_pack(message: Message, email: str, link: str, sub_url: st
     working after a renewal; otherwise it encodes the connection link.
     """
     caption = build_caption(email, link, sub_url, header)
+    kb = connect_keyboard(link)
     try:
         await message.answer_photo(
-            make_qr(sub_url or link), caption=caption, parse_mode="Markdown"
+            make_qr(sub_url or link), caption=caption, parse_mode="Markdown", reply_markup=kb
         )
     except Exception:
         # Never lose the config because the image could not be sent.
-        await message.answer(caption, parse_mode="Markdown")
+        await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
 
 
 async def send_service_pack_to(bot, chat_id: int, email: str, link: str, sub_url: str = "", header: str = ""):
     """Same package, addressed to a chat id (used when an admin approves an order)."""
     caption = build_caption(email, link, sub_url, header)
+    kb = connect_keyboard(link)
     try:
         await bot.send_photo(
             chat_id, make_qr(sub_url or link), caption=caption,
-            parse_mode="Markdown", reply_markup=_main_menu(),
+            parse_mode="Markdown", reply_markup=kb,
         )
     except Exception:
-        await bot.send_message(chat_id, caption, parse_mode="Markdown", reply_markup=_main_menu())
-
-
-def _main_menu():
-    from keyboards import MAIN_MENU
-
-    return MAIN_MENU
+        await bot.send_message(chat_id, caption, parse_mode="Markdown", reply_markup=kb)

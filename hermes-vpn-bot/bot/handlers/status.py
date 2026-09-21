@@ -169,14 +169,12 @@ async def status_view(callback: CallbackQuery):
         sub_url = ""
     if sub_url:
         lines.append(f"لینک اشتراک:\n{sub_url}")
-    if match["uuid"]:
-        # Markdown, not HTML: the vless link's query string is full of
-        # unescaped "&", which HTML mode would reject as broken entities.
-        link = xui.build_vless_link(match["uuid"], email)
-        lines.append(f"\n📎 [اتصال به نرم‌افزار]({app_connect_link(link)})")
     text = "\n".join(lines)
 
     rows = []
+    if match["uuid"]:
+        link = xui.build_vless_link(match["uuid"], email)
+        rows.append([InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))])
     rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"renewpick:{email}")])
     rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"acc:link:{email}"),
                  InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"acc:rename:{email}")])
