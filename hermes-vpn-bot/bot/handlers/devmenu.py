@@ -1692,39 +1692,14 @@ async def _do_extend_client(message: Message, email: str, days: int):
 async def ask_toggle_client(message: Message):
     if not _admin(message):
         return
-    _pending[message.from_user.id] = {"action": "toggle_client"}
-    await message.answer("ایمیل کلاینتی که می‌خوای فعال/غیرفعال کنی رو بفرست. /cancel برای لغو.")
-
-
-async def _do_toggle_client(message: Message, email: str):
-    x = XUIClient()
-    t = x.get_client_traffic(email)
-    if not t:
-        await message.answer(f"کلاینتی با ایمیل {email} پیدا نشد.")
-        return
-    new_state = not t.get("enable", True)
-    try:
-        x.set_client_enabled(email, new_state)
-        await message.answer(f"✅ {email} حالا {'فعال' if new_state else 'غیرفعال'} است.")
-    except XUIError as e:
-        await message.answer(f"❌ ناموفق: {e}")
+    await clientlist.show_action_list(message, "toggle")
 
 
 @router.message(F.text == "🗑 حذف کلاینت")
 async def ask_delete_client(message: Message):
     if not _admin(message):
         return
-    _pending[message.from_user.id] = {"action": "delete_client"}
-    await message.answer("ایمیل کلاینتی که باید حذف بشه رو بفرست (مثل 👥 کلاینت‌ها می‌بینی). /cancel برای لغو.")
-
-
-async def _do_delete_client(message: Message, email: str):
-    x = XUIClient()
-    try:
-        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
-        await message.answer(f"✅ کلاینت {email} حذف شد.")
-    except XUIError as e:
-        await message.answer(f"❌ ناموفق: {e}")
+    await clientlist.show_action_list(message, "delete")
 
 
 # ---------------------------------------------------------------- bulk renew / bulk delete expired
@@ -1922,10 +1897,6 @@ async def handle_pending(message: Message):
         await _do_ws_tls_setup(message, text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
-    elif action == "delete_client":
-        await _do_delete_client(message, text)
-    elif action == "toggle_client":
-        await _do_toggle_client(message, text)
     elif action == "unban_ip":
         await _do_unban(message, text)
     elif action == "bulk_renew":

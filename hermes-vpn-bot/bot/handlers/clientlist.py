@@ -24,7 +24,16 @@ log = logging.getLogger(__name__)
 PAGE_SIZE = 10
 # tg_id -> current multi-step state. "mode" is "list" (browsing/searching
 # the picker), "rename" or "renew" (a follow-up value is expected next).
+# A "list" entry may also carry "list_action" ("delete"/"toggle") when the
+# picker was opened from 🗑 حذف کلاینت / 🔒 مسدود/فعال کلاینت instead of
+# 👥 کلاینت‌ها — tapping a client then performs that action instead of
+# opening its detail card.
 _pending: dict[int, dict] = {}
+
+_ACTION_META = {
+    "delete": ("کدوم کلاینت رو پاک کنم؟", "روی یکی بزن تا پاکش کنم، یا اسمی رو تایپ کن تا جستجو کنم."),
+    "toggle": ("کدوم کلاینت رو مسدود/فعال کنم؟", "روی یکی بزن تا وضعیتش عوض بشه، یا اسمی رو تایپ کن تا جستجو کنم."),
+}
 
 
 def _admin(obj) -> bool:
@@ -92,15 +101,25 @@ def _keyboard(x: XUIClient, emails: list[str], page: int) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _header(total: int, page: int) -> str:
+def _header(total: int, page: int, title: str, hint: str) -> str:
     start = page * PAGE_SIZE
     shown = max(0, min(PAGE_SIZE, total - start))
-    return (f"👥 لیست کلاینت‌ها ({shown} از {total})\n\n"
-            "روی هر کدوم بزن تا وضعیتش رو ببینی، یا اسمی رو تایپ کن تا جستجو کنم.")
+    return f"{title} ({shown} از {total})\n\n{hint}"
 
 
-async def show_list(message: Message):
-    """Entry point — call this from any "list clients" button/command."""
+def _header_for(pending: dict, total: int, page: int) -> str:
+    action = pending.get("list_action")
+    if action in _ACTION_META:
+        title, hint = _ACTION_META[action]
+    else:
+        title = "👥 لیست کلاینت‌ها"
+        hint = "روی هر کدوم بزن تا وضعیتش رو ببینی، یا اسمی رو تایپ کن تا جستجو کنم."
+    return _header(total, page, title, hint)
+
+
+async def _show_picker(message: Message, action: str | None):
+    """Shared entry point for both the plain browse list and the
+    delete/toggle action pickers — same paginated UI either way."""
     if not _admin(message):
         return
     x = XUIClient()
@@ -113,8 +132,23 @@ async def show_list(message: Message):
     if not emails:
         await message.answer("هیچ کلاینتی روی اینباند نیست.")
         return
-    _pending[message.from_user.id] = {"mode": "list", "emails": emails}
-    await message.answer(_header(len(emails), 0), reply_markup=_keyboard(x, emails, 0))
+    pending = {"mode": "list", "emails": emails, "page": 0}
+    if action:
+        pending["list_action"] = action
+    _pending[message.from_user.id] = pending
+    await message.answer(_header_for(pending, len(emails), 0), reply_markup=_keyboard(x, emails, 0))
+
+
+async def show_list(message: Message):
+    """Entry point — call this from any "list clients" button/command."""
+    await _show_picker(message, None)
+
+
+async def show_action_list(message: Message, action: str):
+    """Entry point for the delete / block-unblock picker (action is
+    "delete" or "toggle") — call this from those buttons instead of
+    show_list."""
+    await _show_picker(message, action)
 
 
 @router.message(Command("clients"))
@@ -150,8 +184,11 @@ async def _search_step(message: Message, pending: dict):
     if not matched:
         await message.answer("چیزی با این اسم پیدا نشد — دوباره امتحان کن.")
         return
-    _pending[message.from_user.id] = {"mode": "list", "emails": matched}
-    await message.answer(_header(len(matched), 0), reply_markup=_keyboard(x, matched, 0))
+    new_pending = {"mode": "list", "emails": matched, "page": 0}
+    if pending.get("list_action"):
+        new_pending["list_action"] = pending["list_action"]
+    _pending[message.from_user.id] = new_pending
+    await message.answer(_header_for(new_pending, len(matched), 0), reply_markup=_keyboard(x, matched, 0))
 
 
 async def _rename_step(message: Message, pending: dict):
@@ -199,12 +236,13 @@ async def page_button(callback: CallbackQuery):
         return
     pending = _pending.get(callback.from_user.id)
     if not pending or "emails" not in pending:
-        await callback.answer("این لیست دیگه معتبر نیست — دوباره /clients بزن.", show_alert=True)
+        await callback.answer("این لیست دیگه معتبر نیست — دوباره امتحان کن.", show_alert=True)
         return
     page = int(callback.data.split(":", 2)[2])
+    pending["page"] = page
     x = XUIClient()
     emails = pending["emails"]
-    await callback.message.edit_text(_header(len(emails), page), reply_markup=_keyboard(x, emails, page))
+    await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
     await callback.answer()
 
 
@@ -215,16 +253,80 @@ async def pick_button(callback: CallbackQuery):
         return
     pending = _pending.get(callback.from_user.id)
     if not pending or "emails" not in pending:
-        await callback.answer("این لیست دیگه معتبر نیست — دوباره /clients بزن.", show_alert=True)
+        await callback.answer("این لیست دیگه معتبر نیست — دوباره امتحان کن.", show_alert=True)
         return
     emails = pending["emails"]
     idx = int(callback.data.split(":", 2)[2])
     if idx < 0 or idx >= len(emails):
         await callback.answer("این کلاینت دیگه تو لیست نیست.", show_alert=True)
         return
+    email = emails[idx]
+    action = pending.get("list_action")
+
+    if action == "delete":
+        await callback.answer()
+        await callback.message.edit_text(
+            f"❗ مطمئنی می‌خوای «{email}» رو کامل پاک کنی؟ این کار قابل برگشت نیست.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ بله، پاک کن", callback_data=f"cl:delyes:{email}"),
+                InlineKeyboardButton(text="◀️ نه، برگرد", callback_data="cl:delno"),
+            ]]),
+        )
+        return
+
+    if action == "toggle":
+        x = XUIClient()
+        t = x.get_client_traffic(email)
+        if not t:
+            await callback.answer("این کلاینت پیدا نشد.", show_alert=True)
+            return
+        new_state = not t.get("enable", True)
+        try:
+            x.set_client_enabled(email, new_state)
+        except XUIError as e:
+            await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
+            return
+        await callback.answer(f"✅ {'فعال' if new_state else 'غیرفعال'} شد.")
+        page = pending.get("page", 0)
+        await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
+        return
+
     _pending.pop(callback.from_user.id, None)
     await callback.answer()
-    await show_detail(callback.message, emails[idx])
+    await show_detail(callback.message, email)
+
+
+@router.callback_query(F.data.startswith("cl:delyes:"))
+async def delete_confirm_yes(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    x = XUIClient()
+    try:
+        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
+    except XUIError as e:
+        await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
+        return
+    await callback.answer("✅ حذف شد.")
+    await callback.message.edit_text(f"✅ کلاینت «{email}» حذف شد.")
+    await show_action_list(callback.message, "delete")
+
+
+@router.callback_query(F.data == "cl:delno")
+async def delete_confirm_no(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    await callback.answer()
+    pending = _pending.get(callback.from_user.id)
+    if pending and pending.get("list_action") == "delete" and "emails" in pending:
+        x = XUIClient()
+        page = pending.get("page", 0)
+        emails = pending["emails"]
+        await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
+    else:
+        await show_action_list(callback.message, "delete")
 
 
 @router.callback_query(F.data == "cl:back")
