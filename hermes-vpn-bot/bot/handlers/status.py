@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import config
 import db
-from utils.delivery import send_service_pack
+from utils.delivery import app_connect_link, escape_markdown, send_service_pack
 from xui_client import XUIClient
 
 router = Router()
@@ -153,31 +153,37 @@ async def status_view(callback: CallbackQuery):
          f"حجم مصرف‌شده: {_fmt_size_en(used)}",
          f"حجم باقی‌مانده: {_fmt_size_en(max(0, total_bytes - used))}"]
     )
-    lines = [f"📄 {label or email}", "ـــــــــــــــــــ", f"شناسه اکانت: {email}"]
+    lines = [f"📄 {escape_markdown(label or email)}", "ـــــــــــــــــــ", f"شناسه اکانت: {escape_markdown(email)}"]
     if label:
-        lines.append(f"اسم دلخواه: {label}")
+        lines.append(f"اسم دلخواه: {escape_markdown(label)}")
     lines += [
         f"اتصال: {'🔵 آنلاین' if online else '🔴 آفلاین'}",
         f"وضعیت: {'✅ فعال' if enable else '🔒 مسدود'}",
         *vol_lines,
         f"زمان باقی‌مانده: {_remaining_time(match['expiry_time'])}",
-        f"یوزرنیم اپ: {email}",
+        f"یوزرنیم اپ: {escape_markdown(email)}",
     ]
-    text = "\n".join(lines)
-
     try:
         sub_url = xui.get_sub_url(email)
     except Exception:
         sub_url = ""
-    rows = []
     if sub_url:
-        rows.append([InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)])
+        lines.append(f"لینک اشتراک:\n{sub_url}")
+    if match["uuid"]:
+        # Markdown, not HTML: the vless link's query string is full of
+        # unescaped "&", which HTML mode would reject as broken entities.
+        link = xui.build_vless_link(match["uuid"], email)
+        lines.append(f"\n📎 [اتصال خودکار به {config.APP_NAME}]({app_connect_link(link)})")
+    text = "\n".join(lines)
+
+    rows = []
+    rows.append([InlineKeyboardButton(text=f"⬇️ دانلود {config.APP_NAME}", url=config.APP_DOWNLOAD_URL)])
     rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"renewpick:{email}")])
     rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"acc:link:{email}"),
                  InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"acc:rename:{email}")])
     rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="acc:page:0")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
 
 

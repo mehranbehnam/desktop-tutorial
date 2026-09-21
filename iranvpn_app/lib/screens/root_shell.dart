@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 
 import '../services/vpn_controller.dart';
@@ -19,15 +22,47 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   final _vpn = VpnController();
+  final _appLinks = AppLinks();
+  StreamSubscription<Uri>? _linkSub;
 
   @override
   void initState() {
     super.initState();
     _vpn.init();
+    // hermesvpn://import?url=<encoded config> — sent by the Telegram bot's
+    // "📎 اتصال خودکار" link/button so a customer never has to copy-paste
+    // their config by hand: tapping it lands here with the config already
+    // imported, ready for a single tap on Connect.
+    _linkSub = _appLinks.uriLinkStream.listen(_handleIncomingLink, onError: (_) {});
+    // The stream above only covers links received while already running —
+    // a cold start (app wasn't open yet) needs this instead.
+    _appLinks.getInitialAppLink().then((uri) {
+      if (uri != null) _handleIncomingLink(uri);
+    });
+  }
+
+  Future<void> _handleIncomingLink(Uri uri) async {
+    if (uri.scheme != 'hermesvpn' || uri.host != 'import') return;
+    final configUrl = uri.queryParameters['url'];
+    if (configUrl == null || configUrl.isEmpty) return;
+    try {
+      await _vpn.setConfigFromUrl(configUrl);
+      if (!mounted) return;
+      setState(() => _index = 0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('کانفیگ اضافه شد — روی Connect بزن.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لینک نامعتبر بود.')),
+      );
+    }
   }
 
   @override
   void dispose() {
+    _linkSub?.cancel();
     _vpn.dispose();
     super.dispose();
   }

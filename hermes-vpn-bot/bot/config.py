@@ -62,6 +62,13 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 TRIAL_MB = int(os.getenv("TRIAL_MB", "200"))
 TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 
+# The Android client app every delivered link points customers at — its
+# download URL, and the custom URL scheme it registers to auto-import a
+# config (see utils/delivery.py: APP_DOWNLOAD_URL for "download the app",
+# app_connect_link() for "open it with this config already filled in").
+APP_NAME = os.getenv("APP_NAME", "HermesVPN Connect")
+APP_DOWNLOAD_URL = os.getenv("APP_DOWNLOAD_URL", "https://app.acropolpalace.com/app/HermesVPN-Connect.apk")
+
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [
     {"key": "p20_30", "label": "20 گیگ / 30 روز", "gb": 20, "days": 30, "price": 149},
