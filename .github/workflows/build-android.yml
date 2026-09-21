@@ -34,15 +34,23 @@ jobs:
 
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter build apk --release
+      # Split per ABI: the bundled Xray native library ships a .so per
+      # architecture, so one universal APK carries all of them — split
+      # cuts each download to roughly a third of that, which matters a
+      # lot on a slow/throttled connection.
+      - run: flutter build apk --release --split-per-abi
 
-      - name: Rename APK with build number
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
+      - name: Rename APKs with build number
+        run: |
+          out=build/app/outputs/flutter-apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "$out/app-$abi-release.apk" "$out/iranvpn-${{ github.run_number }}-$abi.apk"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: iranvpn-android-${{ github.run_number }}
-          path: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
+          path: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}-*.apk
 
       - name: Publish/refresh the "android-preview" release with this build
         uses: softprops/action-gh-release@v2
@@ -52,5 +60,9 @@ jobs:
           body: |
             Auto-built from commit ${{ github.sha }} — debug-signed, for sideload testing only.
             No VPN core license/Play Store distribution implied.
+
+            Most phones (2019+): iranvpn-*-arm64-v8a.apk
+            Older/32-bit phones: iranvpn-*-armeabi-v7a.apk
+            Emulator/x86_64: iranvpn-*-x86_64.apk
           prerelease: true
-          files: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
+          files: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}-*.apk
