@@ -7,9 +7,8 @@ import '../models/traffic_sample.dart';
 const _prefKeyConfigUrl = 'iranvpn.config_url';
 const _prefKeyConfigRemark = 'iranvpn.config_remark';
 
-/// The real thing — wraps flutter_v2ray (Xray core) so the home screen's
-/// connect button, graph and stat tiles drive an actual VPN tunnel instead
-/// of TrafficController's mock random walk.
+/// Wraps flutter_v2ray (Xray core) so the home screen's connect button,
+/// graph and stat tiles drive an actual VPN tunnel.
 ///
 /// One config at a time for now (whatever was last saved from the Configs
 /// screen) — a real multi-server list is the next milestone once this
