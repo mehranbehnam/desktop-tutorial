@@ -70,7 +70,10 @@ async def main():
         for lang in (None, "fa"):
             leftover = await bot.get_my_commands(scope=scope, language_code=lang)
             if leftover and [c.command for c in leftover] != [c.command for c in COMMANDS]:
-                logging.warning(
+                # logging.error, not .warning — "📄 خطاهای اخیر" only shows
+                # journalctl -p err, so this needs error level to actually
+                # be visible from there.
+                logging.error(
                     "stray bot commands survived under scope=%s lang=%s: %s",
                     type(scope).__name__, lang, [c.command for c in leftover],
                 )
