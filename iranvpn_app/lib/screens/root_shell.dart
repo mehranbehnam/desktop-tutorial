@@ -33,12 +33,10 @@ class _RootShellState extends State<RootShell> {
     // "📎 اتصال خودکار" link/button so a customer never has to copy-paste
     // their config by hand: tapping it lands here with the config already
     // imported, ready for a single tap on Connect.
+    // uriLinkStream replays the launching URI as its first event too, so
+    // this alone covers both a cold start (app wasn't open yet) and a link
+    // received while already running.
     _linkSub = _appLinks.uriLinkStream.listen(_handleIncomingLink, onError: (_) {});
-    // The stream above only covers links received while already running —
-    // a cold start (app wasn't open yet) needs this instead.
-    _appLinks.getInitialAppLink().then((uri) {
-      if (uri != null) _handleIncomingLink(uri);
-    });
   }
 
   Future<void> _handleIncomingLink(Uri uri) async {
