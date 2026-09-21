@@ -33,7 +33,7 @@ import time
 
 import requests
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -49,7 +49,7 @@ import config
 import db
 from handlers import clientlist, ops
 from keyboards import admin_review_keyboard
-from utils import iran_ssh
+from utils import iran_ssh, support_relay
 from utils.envfile import env_path as _env_path, service_names as _service_names, set_env_var as _set_env_var
 from xui_client import XUIClient, XUIError
 
@@ -1804,27 +1804,23 @@ async def _do_bulk_delete(message: Message, emails: list[str]):
 
 
 # ---------------------------------------------------------------- support inbox (relayed from the sales bot)
+# A customer's support messages arrive here as ordinary messages from
+# the relay (utils/support_relay.py); an admin answers by using
+# Telegram's own reply on one of those, which routes straight back to
+# that customer over the sales bot — a real back-and-forth, not a
+# single message + single reply.
 
-@router.callback_query(F.data.startswith("supportreply:"))
-async def support_reply_button(callback: CallbackQuery):
-    if callback.from_user.id not in config.ADMIN_IDS:
-        await callback.answer("فقط ادمین", show_alert=True)
-        return
-    target_tg_id = int(callback.data.split(":", 1)[1])
-    _pending[callback.from_user.id] = {"action": "support_reply", "target": target_tg_id}
-    await callback.message.answer(f"پاسخت رو برای کاربر {target_tg_id} بنویس:")
-    await callback.answer()
+def _is_support_reply(message: Message) -> bool:
+    return bool(
+        _admin(message)
+        and message.reply_to_message
+        and support_relay.is_relayed_message(message.chat.id, message.reply_to_message.message_id)
+    )
 
 
-async def _do_support_reply(message: Message, target_tg_id: int, text: str):
-    sales_bot = Bot(token=config.BOT_TOKEN)
-    try:
-        await sales_bot.send_message(target_tg_id, f"👤 پاسخ پشتیبانی:\n\n{text}")
-        await message.answer("✅ پاسخ برای کاربر ارسال شد.")
-    except Exception as e:
-        await message.answer(f"❌ ارسال ناموفق: {type(e).__name__}: {e}")
-    finally:
-        await sales_bot.session.close()
+@router.message(_is_support_reply)
+async def handle_support_reply(message: Message):
+    await support_relay.relay_admin_reply(message)
 
 
 # ---------------------------------------------------------------- pending-action dispatch
@@ -1908,5 +1904,3 @@ async def handle_pending(message: Message):
             await _do_bulk_delete(message, pending["emails"])
         else:
             await message.answer("لغو شد؛ چیزی حذف نشد.")
-    elif action == "support_reply":
-        await _do_support_reply(message, pending["target"], message.text)
