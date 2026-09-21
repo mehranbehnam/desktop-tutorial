@@ -172,6 +172,16 @@ MENU_SALES = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+# Tapping a real devmenu button while mid-chat with a support customer
+# should behave normally (leave the chat, run that button) instead of
+# the tap getting swallowed and relayed to the customer as chat text.
+_KNOWN_MENU_TEXTS = {
+    btn.text
+    for kb in (MENU, MENU_CLIENTS, MENU_SECURITY, MENU_MAINTENANCE, MENU_PANEL, MENU_FINANCE, MENU_SALES)
+    for row in kb.keyboard
+    for btn in row
+}
+
 HELP = (
     "🤖 ربات توسعه‌دهنده iranvpn — همه‌ی کارهای نگهداری و فروش از همین‌جا:\n\n"
     "یه دسته رو انتخاب کن تا دکمه‌های اون بخش باز بشه؛ هر وقت خواستی با 🔙 برگرد به منوی اصلی.\n"
@@ -1804,23 +1814,49 @@ async def _do_bulk_delete(message: Message, emails: list[str]):
 
 
 # ---------------------------------------------------------------- support inbox (relayed from the sales bot)
-# A customer's support messages arrive here as ordinary messages from
-# the relay (utils/support_relay.py); an admin answers by using
-# Telegram's own reply on one of those, which routes straight back to
-# that customer over the sales bot — a real back-and-forth, not a
-# single message + single reply.
+# A customer's support messages arrive here relayed from the sales bot
+# (utils/support_relay.py), each with a "↩️ پاسخ به این گفتگو" button.
+# Tapping it makes this admin's messages go to that customer until they
+# end the chat — no native-reply gesture to remember or miss.
 
-def _is_support_reply(message: Message) -> bool:
-    return bool(
-        _admin(message)
-        and message.reply_to_message
-        and support_relay.is_relayed_message(message.chat.id, message.reply_to_message.message_id)
+@router.callback_query(F.data.startswith("supreply:"))
+async def support_reply_button(callback: CallbackQuery):
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    target_tg_id = int(callback.data.split(":", 1)[1])
+    support_relay.set_active_target(callback.from_user.id, target_tg_id)
+    await callback.answer()
+    await callback.message.answer(
+        f"💬 وارد گفتگو با مشتری {target_tg_id} شدی — هر چی بفرستی مستقیم براش می‌ره.\n"
+        f"برای پایان «{support_relay.ADMIN_EXIT_BUTTON}» رو بزن.",
+        reply_markup=support_relay.admin_chat_keyboard(),
     )
 
 
-@router.message(_is_support_reply)
-async def handle_support_reply(message: Message):
-    await support_relay.relay_admin_reply(message)
+@router.message(F.text == support_relay.ADMIN_EXIT_BUTTON)
+async def end_admin_support_chat(message: Message):
+    if not _admin(message):
+        return
+    support_relay.end_active_target(message.from_user.id)
+    await message.answer("گفتگو با مشتری تموم شد.", reply_markup=MENU)
+
+
+def _is_admin_support_chat(message: Message) -> bool:
+    if not message.text or not _admin(message):
+        return False
+    if support_relay.get_active_target(message.from_user.id) is None:
+        return False
+    if message.text.startswith("/") or message.text in _KNOWN_MENU_TEXTS:
+        support_relay.end_active_target(message.from_user.id)
+        return False
+    return True
+
+
+@router.message(_is_admin_support_chat)
+async def relay_admin_support_chat(message: Message):
+    result = await support_relay.send_admin_reply(message.from_user.id, message.text)
+    await message.answer(result)
 
 
 # ---------------------------------------------------------------- pending-action dispatch
