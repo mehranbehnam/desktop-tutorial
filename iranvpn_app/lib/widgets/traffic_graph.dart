@@ -4,8 +4,8 @@ import '../models/traffic_sample.dart';
 import '../theme/app_theme.dart';
 
 /// A slim animated area chart of download throughput — the "Xray graph"
-/// under the globe. Rebuilds on every new sample from
-/// [TrafficController], so it stays live without its own timer.
+/// under the globe. Rebuilds on every new sample from [VpnController],
+/// so it stays live without its own timer.
 class TrafficGraph extends StatelessWidget {
   const TrafficGraph({super.key, required this.samples, this.height = 56});
 

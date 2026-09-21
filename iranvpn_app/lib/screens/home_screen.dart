@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../services/traffic_controller.dart';
+import '../services/vpn_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/connect_button.dart';
 import '../widgets/flying_planes.dart';
@@ -9,47 +9,46 @@ import '../widgets/stat_tile.dart';
 import '../widgets/traffic_graph.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.vpn});
+
+  final VpnController vpn;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final TrafficController _traffic;
-  bool _connecting = false;
-
-  static const _serverLabel = 'ws-tls-cdn1-کلاینت';
-
   @override
   void initState() {
     super.initState();
-    _traffic = TrafficController();
-    _traffic.addListener(_onTrafficChanged);
+    widget.vpn.addListener(_onVpnChanged);
   }
 
   @override
   void dispose() {
-    _traffic.removeListener(_onTrafficChanged);
-    _traffic.dispose();
+    widget.vpn.removeListener(_onVpnChanged);
     super.dispose();
   }
 
-  void _onTrafficChanged() => setState(() {});
+  void _onVpnChanged() {
+    if (widget.vpn.lastError != null) {
+      final error = widget.vpn.lastError!;
+      widget.vpn.lastError = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      });
+    }
+    setState(() {});
+  }
 
   Future<void> _toggleConnection() async {
-    if (_connecting) return;
-    if (_traffic.connected) {
-      _traffic.setConnected(false);
-      return;
+    if (widget.vpn.connecting) return;
+    if (widget.vpn.connected) {
+      await widget.vpn.disconnect();
+    } else {
+      await widget.vpn.connect();
     }
-    setState(() => _connecting = true);
-    // Placeholder handshake delay — replace with the real VPN engine's
-    // connect() future once it's wired in.
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (!mounted) return;
-    setState(() => _connecting = false);
-    _traffic.setConnected(true);
   }
 
   String _fmtSpeed(double bytesPerSec) {
@@ -69,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: TrafficGraph(samples: _traffic.samples),
+            child: TrafficGraph(samples: widget.vpn.samples),
           ),
           const SizedBox(height: 12),
           _buildStatsRow(),
@@ -151,8 +150,8 @@ class _HomeScreenState extends State<HomeScreen> {
               right: 0,
               child: Center(
                 child: ConnectButton(
-                  connected: _traffic.connected,
-                  connecting: _connecting,
+                  connected: widget.vpn.connected,
+                  connecting: widget.vpn.connecting,
                   onTap: _toggleConnection,
                 ),
               ),
@@ -164,27 +163,37 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLocationLabel() {
+    final label = widget.vpn.hasConfig
+        ? (widget.vpn.configRemark ?? widget.vpn.configUrl!)
+        : 'کانفیگی انتخاب نشده — از تب Configs اضافه کن';
     return Column(
       children: [
         const Text('Current Location', style: TextStyle(color: AppColors.textFaint, fontSize: 12)),
         const SizedBox(height: 2),
-        Text(
-          _serverLabel,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
+          ),
         ),
       ],
     );
   }
 
   Widget _buildStatsRow() {
+    final status = widget.vpn.status;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(child: StatTile(label: 'Download Speed', value: _fmtSpeed(_traffic.downloadBytesPerSec))),
-          Expanded(child: StatTile(label: 'Upload Speed', value: _fmtSpeed(_traffic.uploadBytesPerSec))),
-          Expanded(child: StatTile(label: 'Ping', value: _traffic.connected ? '${_traffic.pingMs} ms' : '--')),
+          Expanded(child: StatTile(label: 'Download Speed', value: _fmtSpeed(status.downloadSpeed.toDouble()))),
+          Expanded(child: StatTile(label: 'Upload Speed', value: _fmtSpeed(status.uploadSpeed.toDouble()))),
+          Expanded(child: StatTile(label: 'Duration', value: widget.vpn.connected ? status.duration : '--')),
         ],
       ),
     );

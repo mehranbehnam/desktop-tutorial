@@ -1,0 +1,56 @@
+name: Build Android APK (iranvpn_app)
+
+# Builds the Flutter app's Android APK on GitHub's own runners — this repo's
+# dev sandbox has no path to the Android SDK (its egress policy blocks
+# dl.google.com), so GitHub Actions is where a real installable APK
+# actually gets produced. The APK is debug-signed (this app has no release
+# keystore yet) — fine for sideloading during testing, not for a Play
+# Store release.
+on:
+  push:
+    branches:
+      - claude/iran-vpn-turkey-d2hbvg
+    paths:
+      - "iranvpn_app/**"
+      - ".github/workflows/build-android.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iranvpn_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: "stable"
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter build apk --release
+
+      - name: Rename APK with build number
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iranvpn-android-${{ github.run_number }}
+          path: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
+
+      - name: Publish/refresh the "android-preview" release with this build
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-preview
+          name: "IranVPN Android preview (build ${{ github.run_number }})"
+          body: |
+            Auto-built from commit ${{ github.sha }} — debug-signed, for sideload testing only.
+            No VPN core license/Play Store distribution implied.
+          prerelease: true
+          files: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}.apk
