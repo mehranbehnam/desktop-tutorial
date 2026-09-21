@@ -145,6 +145,22 @@ def get_clients_for_user(tg_id: int):
         return conn.execute("SELECT * FROM clients WHERE tg_id=?", (tg_id,)).fetchall()
 
 
+def get_client(xui_email: str):
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM clients WHERE xui_email=?", (xui_email,)).fetchone()
+
+
+def has_approved_order(xui_email: str) -> bool:
+    """True if this client was actually sold through the buy flow (an
+    approved order with this email exists) — as opposed to an admin having
+    created it by hand via the dev bot's client tools."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM orders WHERE xui_email=? AND status='approved' LIMIT 1", (xui_email,)
+        ).fetchone()
+        return row is not None
+
+
 def report_since(seconds: int | None):
     """Approved-order count/total since `seconds` ago, or all-time if None."""
     with get_conn() as conn:

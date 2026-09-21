@@ -6,9 +6,11 @@ to connect, renew, resend the link, or rename. Used by both bots (via
 buttons) so there is exactly one implementation to fix instead of two
 menus quietly drifting apart.
 """
+import datetime
 import json
 import logging
 import time
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -22,6 +24,7 @@ router = Router()
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10
+_TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 # tg_id -> current multi-step state. "mode" is "list" (browsing/searching
 # the picker), "rename" or "renew" (a follow-up value is expected next).
 # A "list" entry may also carry "list_action" ("delete"/"toggle") when the
@@ -48,6 +51,41 @@ def _size(n: int) -> str:
         return f"{n / 1024**2:.0f}MB"
     gb = n / 1024**3
     return f"{gb:.0f}GB" if gb == int(gb) else f"{gb:.2f}GB"
+
+
+def _gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
+    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    j_days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]
+    gy2 = gy - 1600
+    gm2 = gm - 1
+    gd2 = gd - 1
+    g_day_no = 365 * gy2 + (gy2 + 3) // 4 - (gy2 + 99) // 100 + (gy2 + 399) // 400
+    for i in range(gm2):
+        g_day_no += g_days_in_month[i]
+    if gm2 > 1 and ((gy % 4 == 0 and gy % 100 != 0) or gy % 400 == 0):
+        g_day_no += 1
+    g_day_no += gd2
+    j_day_no = g_day_no - 79
+    j_np = j_day_no // 12053
+    j_day_no %= 12053
+    jy = 979 + 33 * j_np + 4 * (j_day_no // 1461)
+    j_day_no %= 1461
+    if j_day_no >= 366:
+        jy += (j_day_no - 1) // 365
+        j_day_no = (j_day_no - 1) % 365
+    jm, jd = 12, j_day_no + 1
+    for i in range(11):
+        if j_day_no < j_days_in_month[i]:
+            jm, jd = i + 1, j_day_no + 1
+            break
+        j_day_no -= j_days_in_month[i]
+    return jy, jm, jd
+
+
+def _format_jalali(ts: int) -> str:
+    dt = datetime.datetime.fromtimestamp(ts, _TEHRAN_TZ)
+    jy, jm, jd = _gregorian_to_jalali(dt.year, dt.month, dt.day)
+    return f"{dt.strftime('%H:%M')} {jy:04d}/{jm:02d}/{jd:02d}"
 
 
 def _remaining_time(expiry_ms: int) -> str:
@@ -326,6 +364,11 @@ async def page_button(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cl:p:"))
 async def pick_button(callback: CallbackQuery):
+    """Tapping any client, in any picker (plain browse, the delete/toggle
+    action lists, or the blocked-only view), always opens its full detail
+    card — the card itself carries the delete/block buttons, each with its
+    own confirm step, so every entry point converges on the same complete,
+    accurate view instead of a shortcut action list."""
     if not _admin(callback):
         await callback.answer("فقط ادمین", show_alert=True)
         return
@@ -339,73 +382,9 @@ async def pick_button(callback: CallbackQuery):
         await callback.answer("این کلاینت دیگه تو لیست نیست.", show_alert=True)
         return
     email = emails[idx]
-    action = pending.get("list_action")
-
-    if action == "delete":
-        await callback.answer()
-        await callback.message.edit_text(
-            f"❗ مطمئنی می‌خوای «{email}» رو کامل پاک کنی؟ این کار قابل برگشت نیست.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="✅ بله، پاک کن", callback_data=f"cl:delyes:{email}"),
-                InlineKeyboardButton(text="◀️ نه، برگرد", callback_data="cl:delno"),
-            ]]),
-        )
-        return
-
-    if action == "toggle":
-        x = XUIClient()
-        t = x.get_client_traffic(email)
-        if not t:
-            await callback.answer("این کلاینت پیدا نشد.", show_alert=True)
-            return
-        new_state = not t.get("enable", True)
-        try:
-            x.set_client_enabled(email, new_state)
-        except XUIError as e:
-            await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
-            return
-        await callback.answer(f"✅ {'فعال' if new_state else 'غیرفعال'} شد.")
-        page = pending.get("page", 0)
-        text, kb = _render_list(pending, page, x)
-        await callback.message.edit_text(text, reply_markup=kb)
-        return
-
     _pending.pop(callback.from_user.id, None)
     await callback.answer()
     await show_detail(callback.message, email)
-
-
-@router.callback_query(F.data.startswith("cl:delyes:"))
-async def delete_confirm_yes(callback: CallbackQuery):
-    if not _admin(callback):
-        await callback.answer("فقط ادمین", show_alert=True)
-        return
-    email = callback.data.split(":", 2)[2]
-    x = XUIClient()
-    try:
-        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
-    except XUIError as e:
-        await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
-        return
-    await callback.answer("✅ حذف شد.")
-    await callback.message.edit_text(f"✅ کلاینت «{email}» حذف شد.")
-    await show_action_list(callback.message, "delete")
-
-
-@router.callback_query(F.data == "cl:delno")
-async def delete_confirm_no(callback: CallbackQuery):
-    if not _admin(callback):
-        await callback.answer("فقط ادمین", show_alert=True)
-        return
-    await callback.answer()
-    pending = _pending.get(callback.from_user.id)
-    if pending and pending.get("list_action") == "delete" and "emails" in pending:
-        x = XUIClient()
-        page = pending.get("page", 0)
-        text, kb = _render_list(pending, page, x)
-        await callback.message.edit_text(text, reply_markup=kb)
-    else:
-        await show_action_list(callback.message, "delete")
 
 
 @router.callback_query(F.data == "cl:back")
@@ -473,22 +452,55 @@ async def cancel(message: Message):
 
 
 def _detail_keyboard(email: str, sub_url: str, enabled: bool) -> InlineKeyboardMarkup:
-    rows = []
-    if sub_url:
-        rows.append([InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)])
-    rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"cl:renew:{email}")])
-    rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"cl:link:{email}"),
-                 InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")])
-    rows.append([InlineKeyboardButton(
-        text="🔓 فعال کردن" if not enabled else "🔒 مسدود کردن",
-        callback_data=f"cl:toggledetail:{email}",
-    )])
-    rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🔓 فعال کن" if not enabled else "🔒 مسدود کن",
+            callback_data=f"cl:togask:{email}",
+        )],
+        [InlineKeyboardButton(text="🗑 حذف کلاینت", callback_data=f"cl:delask:{email}")],
+        [InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"cl:refresh:{email}")],
+        [InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"cl:renew:{email}"),
+         InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")],
+        *([[InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)]] if sub_url else []),
+        [InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")],
+    ])
 
 
-@router.callback_query(F.data.startswith("cl:toggledetail:"))
-async def toggle_detail_button(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("cl:refresh:"))
+async def refresh_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    await callback.answer("🔄 به‌روز شد.")
+    await show_detail(callback.message, email)
+
+
+@router.callback_query(F.data.startswith("cl:togask:"))
+async def toggle_ask_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
+        await callback.answer("این کلاینت پیدا نشد.", show_alert=True)
+        return
+    enabled = t.get("enable", True)
+    name = db.get_labels([email]).get(email) or email
+    await callback.answer()
+    await callback.message.answer(
+        f"{name} الان {'فعاله' if enabled else 'مسدوده'} — {'مسدود' if enabled else 'فعال'} بشه؟",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ تایید", callback_data=f"cl:togyes:{email}"),
+            InlineKeyboardButton(text="❌ نفو", callback_data=f"cl:togno:{email}"),
+        ]]),
+    )
+
+
+@router.callback_query(F.data.startswith("cl:togyes:"))
+async def toggle_confirm_yes(callback: CallbackQuery):
     if not _admin(callback):
         await callback.answer("فقط ادمین", show_alert=True)
         return
@@ -504,7 +516,62 @@ async def toggle_detail_button(callback: CallbackQuery):
     except XUIError as e:
         await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
         return
-    await callback.answer(f"✅ {'فعال' if new_state else 'غیرفعال'} شد.")
+    await callback.answer(f"✅ {'فعال' if new_state else 'مسدود'} شد.")
+    await callback.message.delete()
+    await show_detail(callback.message, email)
+
+
+@router.callback_query(F.data.startswith("cl:togno:"))
+async def toggle_confirm_no(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    await callback.answer()
+    await callback.message.delete()
+    await show_detail(callback.message, email)
+
+
+@router.callback_query(F.data.startswith("cl:delask:"))
+async def delete_ask_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    await callback.answer()
+    await callback.message.answer(
+        f"❗ مطمئنی می‌خوای «{email}» رو کامل پاک کنی؟ این کار قابل برگشت نیست.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ تایید", callback_data=f"cl:delyes:{email}"),
+            InlineKeyboardButton(text="❌ نفو", callback_data=f"cl:delno:{email}"),
+        ]]),
+    )
+
+
+@router.callback_query(F.data.startswith("cl:delyes:"))
+async def delete_confirm_yes(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    x = XUIClient()
+    try:
+        x.delete_client(inbound_id=config.XUI_INBOUND_ID, client_uuid="", email=email)
+    except XUIError as e:
+        await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
+        return
+    await callback.answer("✅ حذف شد.")
+    await callback.message.edit_text(f"✅ کلاینت «{email}» حذف شد.")
+
+
+@router.callback_query(F.data.startswith("cl:delno:"))
+async def delete_confirm_no(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    await callback.answer()
+    await callback.message.delete()
     await show_detail(callback.message, email)
 
 
@@ -520,24 +587,38 @@ async def show_detail(message: Message, email: str):
     enabled = t.get("enable", True)
     label = db.get_labels([email]).get(email)
 
+    if online:
+        conn_line = "🔵 آنلاین"
+    elif used > 0:
+        conn_line = "🔴 آفلاین"
+    else:
+        conn_line = "⚪ هنوز وصل نشده"
+
     vol_lines = (
         ["حجم کل: نامحدود"] if not total else
         [f"حجم کل: {_size(total)}",
          f"حجم مصرف‌شده: {_size(used)}",
          f"حجم باقی‌مانده: {_size(max(0, total - used))}"]
     )
-    lines = [f"📄 {label or email}", "ـــــــــــــــــــ", f"شناسه اکانت: {email}"]
-    if label:
-        lines.append(f"اسم دلخواه: {label}")
-    lines += [
-        f"اتصال: {'🔵 آنلاین' if online else '🔴 آفلاین'}",
-        f"وضعیت: {'✅ فعال' if enabled else '🔒 مسدود'}",
-        *vol_lines,
-        f"زمان باقی‌مانده: {_remaining_time(t.get('expiryTime', 0))}",
-        f"یوزرنیم اپ: {email}",
-    ]
+    lines = [f"<b>{label or email}</b>", f"اتصال: {conn_line}", f"وضعیت: {'✅ فعال' if enabled else '🔒 مسدود'}"]
+    lines += vol_lines
+    lines.append(f"زمان باقی‌مانده: {_remaining_time(t.get('expiryTime', 0))}")
+
+    record = db.get_client(email)
+    if record and record["tg_id"]:
+        lines.append(f"مالک تلگرام: {record['tg_id']}")
+    if record and record["created_at"]:
+        lines.append(f"تاریخ ساخت: {_format_jalali(record['created_at'])}")
+
     try:
         sub_url = x.get_sub_url(email)
     except Exception:
         sub_url = ""
-    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, sub_url, enabled))
+    if sub_url:
+        lines.append(f"لینک اشتراک:\n{sub_url}")
+
+    if not db.has_approved_order(email):
+        lines.append("")
+        lines.append("خریدی ثبت نشده (احتمالاً دستی ساخته شده).")
+
+    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, sub_url, enabled), parse_mode="HTML")

@@ -1519,7 +1519,7 @@ async def _new_client_step(message: Message, pending: dict):
             await message.answer("عدد نامعتبر.")
             return
         _pending.pop(message.from_user.id, None)
-        await _create_client(message, pending["email"], pending["gb"], days)
+        await _create_client(message, pending["email"], pending["gb"], days, message.from_user.id)
 
 
 @router.callback_query(F.data.startswith("devnc:gb:"))
@@ -1563,10 +1563,10 @@ async def new_client_days_button(callback: CallbackQuery):
     _pending.pop(callback.from_user.id, None)
     await callback.answer()
     await callback.message.edit_text(f"⏳ در حال ساخت کلاینت {pending['email']}…")
-    await _create_client(callback.message, pending["email"], pending["gb"], days)
+    await _create_client(callback.message, pending["email"], pending["gb"], days, callback.from_user.id)
 
 
-async def _create_client(message: Message, email: str, gb: int, days: int):
+async def _create_client(message: Message, email: str, gb: int, days: int, admin_tg_id: int):
     x = XUIClient()
     try:
         client = x.add_client(email=email, gb=gb, days=days)
@@ -1574,6 +1574,7 @@ async def _create_client(message: Message, email: str, gb: int, days: int):
     except XUIError as e:
         await message.answer(f"❌ ناموفق: {e}")
         return
+    db.save_client(email, admin_tg_id, client["uuid"], gb, client["expiry_time"])
     await message.answer(f"✅ کلاینت ساخته شد: {email}\n\n<code>{link}</code>", parse_mode="HTML")
 
 
@@ -1621,7 +1622,7 @@ async def _bulk_create_step(message: Message, pending: dict):
             await message.answer("عدد نامعتبر.")
             return
         _pending.pop(message.from_user.id, None)
-        await _do_bulk_create(message, pending["count"], pending["gb"], days)
+        await _do_bulk_create(message, pending["count"], pending["gb"], days, message.from_user.id)
 
 
 @router.callback_query(F.data.startswith("devbulk:gb:"))
@@ -1665,10 +1666,10 @@ async def bulk_create_days_button(callback: CallbackQuery):
     _pending.pop(callback.from_user.id, None)
     await callback.answer()
     await callback.message.edit_text(f"⏳ در حال ساخت {pending['count']} کلاینت…")
-    await _do_bulk_create(callback.message, pending["count"], pending["gb"], days)
+    await _do_bulk_create(callback.message, pending["count"], pending["gb"], days, callback.from_user.id)
 
 
-async def _do_bulk_create(message: Message, count: int, gb: int, days: int):
+async def _do_bulk_create(message: Message, count: int, gb: int, days: int, admin_tg_id: int):
     x = XUIClient()
     prefix = f"batch{int(time.time())}"
     created, failed = [], []
@@ -1677,6 +1678,7 @@ async def _do_bulk_create(message: Message, count: int, gb: int, days: int):
         try:
             client = x.add_client(email=email, gb=gb, days=days)
             link = x.build_vless_link(client["uuid"], email)
+            db.save_client(email, admin_tg_id, client["uuid"], gb, client["expiry_time"])
             created.append((email, link))
         except XUIError as e:
             failed.append(f"{email}: {e}")
