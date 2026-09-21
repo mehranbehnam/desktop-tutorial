@@ -42,7 +42,7 @@ dependencies:
   # 3.24.5 toolchain provides ("unknown property 'flutter' for extension
   # 'android'"). 3.5.x predates that and has the same AppLinks/uriLinkStream
   # API this app actually uses.
-  app_links: 3.5.2
+  app_links: 3.5.1
 
 dev_dependencies:
   flutter_test:
