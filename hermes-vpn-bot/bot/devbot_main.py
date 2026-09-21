@@ -14,6 +14,7 @@ from aiogram.types import (
 import config
 import db
 from handlers import admin, buy, clientlist, devmenu, ops, renew, start, status, trial
+from utils import cleanup
 
 # Shown via the ☰ menu button next to the message box — kept to just the
 # basics (start/menu/cancel/stop). Everything else lives on the
@@ -93,6 +94,11 @@ async def main():
     dp.include_router(trial.router)
     dp.include_router(status.router)
     dp.include_router(admin.router)
+
+    # Housekeeping: auto-reject orders stuck "awaiting_review" for 24h+ and
+    # auto-delete expired XUI clients (real accounts and expired free-trial
+    # ones alike), on a timer — see utils/cleanup.py for why.
+    asyncio.create_task(cleanup.cleanup_loop(bot))
 
     await bot.delete_webhook(drop_pending_updates=False)
     await dp.start_polling(bot)
