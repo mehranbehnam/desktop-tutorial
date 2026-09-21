@@ -235,6 +235,43 @@ def auto_approve_enabled() -> bool:
     return get_setting("auto_approve", "0") == "1"
 
 
+def report_between(start_ts: int | None, end_ts: int | None):
+    """Approved-order count/total within [start_ts, end_ts) — either bound
+    may be None for "no lower/upper limit"."""
+    with get_conn() as conn:
+        clauses = ["status='approved'"]
+        params: list[int] = []
+        if start_ts is not None:
+            clauses.append("created_at >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("created_at < ?")
+            params.append(end_ts)
+        where = " AND ".join(clauses)
+        row = conn.execute(
+            f"SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total FROM orders WHERE {where}",
+            params,
+        ).fetchone()
+        return row["cnt"], row["total"]
+
+
+def recent_approved_orders(limit: int = 10):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE status='approved' ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+
+def search_orders_by_amount(amount: int, limit: int = 10):
+    """Every order (any status) with this exact amount, newest first — for
+    reconciling a bank-statement line against what the bot actually did
+    with it, regardless of whether that order ended up approved."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE amount=? ORDER BY id DESC LIMIT ?", (amount, limit)
+        ).fetchall()
+
+
 def stats() -> dict:
     """Aggregate counters for a one-glance business overview."""
     with get_conn() as conn:

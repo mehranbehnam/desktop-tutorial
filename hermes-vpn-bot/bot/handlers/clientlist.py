@@ -117,6 +117,53 @@ def _header_for(pending: dict, total: int, page: int) -> str:
     return _header(total, page, title, hint)
 
 
+def _blocked_line(x: XUIClient, email: str) -> str:
+    label = db.get_labels([email]).get(email)
+    t = x.get_client_traffic(email) or {}
+    total = t.get("total", 0)
+    used = t.get("up", 0) + t.get("down", 0)
+    size_txt = "نامحدود" if not total else f"{_size(used)}/{_size(total)}"
+    remain = _remaining_time(t.get("expiryTime", 0))
+    return f"🔒 {label or email}: {size_txt} • {remain}"
+
+
+def _blocked_keyboard(emails: list[str], page: int) -> InlineKeyboardMarkup:
+    start = page * PAGE_SIZE
+    chunk = list(enumerate(emails))[start:start + PAGE_SIZE]
+    rows, row = [], []
+    for idx, email in chunk:
+        label = db.get_labels([email]).get(email)
+        row.append(InlineKeyboardButton(text=f"🔒 {label or email}", callback_data=f"cl:p:{idx}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ قبلی", callback_data=f"cl:pg:{page-1}"))
+    if start + PAGE_SIZE < len(emails):
+        nav.append(InlineKeyboardButton(text="بعدی ▶️", callback_data=f"cl:pg:{page+1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _render_list(pending: dict, page: int, x: XUIClient) -> tuple[str, InlineKeyboardMarkup]:
+    """Builds the (text, keyboard) pair for whichever picker mode `pending`
+    is in — plain browse, delete/toggle action list, or the blocked-only
+    view (which shows a GB/days line per client instead of just a dot)."""
+    emails = pending["emails"]
+    if pending.get("blocked"):
+        start = page * PAGE_SIZE
+        chunk = emails[start:start + PAGE_SIZE]
+        total_pages = max(1, (len(emails) + PAGE_SIZE - 1) // PAGE_SIZE)
+        lines = [f"🔒 کلاینت‌های مسدود — صفحه {page + 1} از {total_pages} (کل: {len(emails)})", ""]
+        lines += [_blocked_line(x, email) for email in chunk]
+        return "\n".join(lines), _blocked_keyboard(emails, page)
+    return _header_for(pending, len(emails), page), _keyboard(x, emails, page)
+
+
 async def _show_picker(message: Message, action: str | None):
     """Shared entry point for both the plain browse list and the
     delete/toggle action pickers — same paginated UI either way."""
@@ -136,7 +183,8 @@ async def _show_picker(message: Message, action: str | None):
     if action:
         pending["list_action"] = action
     _pending[message.from_user.id] = pending
-    await message.answer(_header_for(pending, len(emails), 0), reply_markup=_keyboard(x, emails, 0))
+    text, kb = _render_list(pending, 0, x)
+    await message.answer(text, reply_markup=kb)
 
 
 async def show_list(message: Message):
@@ -149,6 +197,29 @@ async def show_action_list(message: Message, action: str):
     "delete" or "toggle") — call this from those buttons instead of
     show_list."""
     await _show_picker(message, action)
+
+
+async def show_blocked_list(message: Message):
+    """Entry point for "🔒 لیست مسدودی‌ها" — every currently-disabled
+    client, each with its GB usage and remaining time, paginated the same
+    way as the other pickers. Tapping one opens its detail card, which now
+    carries an unblock button."""
+    if not _admin(message):
+        return
+    x = XUIClient()
+    try:
+        clients = _list_clients(x)
+    except (XUIError, ValueError) as e:
+        await message.answer(f"❌ خطا در خوندن لیست کلاینت‌ها: {e}")
+        return
+    emails = [c.get("email", "?") for c in clients if not c.get("enable", True)]
+    if not emails:
+        await message.answer("هیچ کلاینت مسدودی نیست ✅")
+        return
+    pending = {"mode": "list", "emails": emails, "page": 0, "blocked": True}
+    _pending[message.from_user.id] = pending
+    text, kb = _render_list(pending, 0, x)
+    await message.answer(text, reply_markup=kb)
 
 
 @router.message(Command("clients"))
@@ -176,10 +247,14 @@ async def _search_step(message: Message, pending: dict):
     query = message.text.strip().lower()
     x = XUIClient()
     try:
-        all_emails = [c.get("email", "?") for c in _list_clients(x)]
+        clients = _list_clients(x)
     except (XUIError, ValueError) as e:
         await message.answer(f"❌ خطا: {e}")
         return
+    if pending.get("blocked"):
+        all_emails = [c.get("email", "?") for c in clients if not c.get("enable", True)]
+    else:
+        all_emails = [c.get("email", "?") for c in clients]
     matched = [e for e in all_emails if query in e.lower()] if query else all_emails
     if not matched:
         await message.answer("چیزی با این اسم پیدا نشد — دوباره امتحان کن.")
@@ -187,8 +262,11 @@ async def _search_step(message: Message, pending: dict):
     new_pending = {"mode": "list", "emails": matched, "page": 0}
     if pending.get("list_action"):
         new_pending["list_action"] = pending["list_action"]
+    if pending.get("blocked"):
+        new_pending["blocked"] = True
     _pending[message.from_user.id] = new_pending
-    await message.answer(_header_for(new_pending, len(matched), 0), reply_markup=_keyboard(x, matched, 0))
+    text, kb = _render_list(new_pending, 0, x)
+    await message.answer(text, reply_markup=kb)
 
 
 async def _rename_step(message: Message, pending: dict):
@@ -241,8 +319,8 @@ async def page_button(callback: CallbackQuery):
     page = int(callback.data.split(":", 2)[2])
     pending["page"] = page
     x = XUIClient()
-    emails = pending["emails"]
-    await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
+    text, kb = _render_list(pending, page, x)
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 
@@ -288,7 +366,8 @@ async def pick_button(callback: CallbackQuery):
             return
         await callback.answer(f"✅ {'فعال' if new_state else 'غیرفعال'} شد.")
         page = pending.get("page", 0)
-        await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
+        text, kb = _render_list(pending, page, x)
+        await callback.message.edit_text(text, reply_markup=kb)
         return
 
     _pending.pop(callback.from_user.id, None)
@@ -323,8 +402,8 @@ async def delete_confirm_no(callback: CallbackQuery):
     if pending and pending.get("list_action") == "delete" and "emails" in pending:
         x = XUIClient()
         page = pending.get("page", 0)
-        emails = pending["emails"]
-        await callback.message.edit_text(_header_for(pending, len(emails), page), reply_markup=_keyboard(x, emails, page))
+        text, kb = _render_list(pending, page, x)
+        await callback.message.edit_text(text, reply_markup=kb)
     else:
         await show_action_list(callback.message, "delete")
 
@@ -393,15 +472,40 @@ async def cancel(message: Message):
         await message.answer("لغو شد.")
 
 
-def _detail_keyboard(email: str, sub_url: str) -> InlineKeyboardMarkup:
+def _detail_keyboard(email: str, sub_url: str, enabled: bool) -> InlineKeyboardMarkup:
     rows = []
     if sub_url:
         rows.append([InlineKeyboardButton(text="↗️ اتصال به نرم‌افزار", url=sub_url)])
     rows.append([InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"cl:renew:{email}")])
     rows.append([InlineKeyboardButton(text="🔄 دریافت لینک", callback_data=f"cl:link:{email}"),
                  InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")])
+    rows.append([InlineKeyboardButton(
+        text="🔓 فعال کردن" if not enabled else "🔒 مسدود کردن",
+        callback_data=f"cl:toggledetail:{email}",
+    )])
     rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("cl:toggledetail:"))
+async def toggle_detail_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    email = callback.data.split(":", 2)[2]
+    x = XUIClient()
+    t = x.get_client_traffic(email)
+    if not t:
+        await callback.answer("این کلاینت پیدا نشد.", show_alert=True)
+        return
+    new_state = not t.get("enable", True)
+    try:
+        x.set_client_enabled(email, new_state)
+    except XUIError as e:
+        await callback.answer(f"❌ ناموفق: {e}", show_alert=True)
+        return
+    await callback.answer(f"✅ {'فعال' if new_state else 'غیرفعال'} شد.")
+    await show_detail(callback.message, email)
 
 
 async def show_detail(message: Message, email: str):
@@ -436,4 +540,4 @@ async def show_detail(message: Message, email: str):
         sub_url = x.get_sub_url(email)
     except Exception:
         sub_url = ""
-    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, sub_url))
+    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, sub_url, enabled))

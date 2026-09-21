@@ -22,14 +22,17 @@ would be overhead without upside. Flows with more than one follow-up value
 stage transitions and are responsible for popping themselves out of
 `_pending` on their last step.
 """
+import datetime
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import time
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -105,6 +108,7 @@ MENU_CLIENTS = ReplyKeyboardMarkup(
         [KeyboardButton(text="📦 ساخت انبوه"), KeyboardButton(text="🔍 وضعیت کلاینت")],
         [KeyboardButton(text="⏳ تمدید کلاینت"), KeyboardButton(text="➕ افزایش حجم/زمان")],
         [KeyboardButton(text="🔒 مسدود/فعال کلاینت"), KeyboardButton(text="🗑 حذف کلاینت")],
+        [KeyboardButton(text="🔒 لیست مسدودی‌ها")],
         [KeyboardButton(text="🔄 تمدید انبوه"), KeyboardButton(text="🗑 حذف انبوه (منقضی‌شده‌ها)")],
         [KeyboardButton(text="🛠 اصلاح Flow"), KeyboardButton(text="🔑 اصلاح کلیدها")],
         [KeyboardButton(text=BACK)],
@@ -1226,17 +1230,128 @@ async def stats_cmd(message: Message):
     )
 
 
+_TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+
+_FIN_PERIOD_LABELS = {
+    "today": "امروز",
+    "week": "این هفته",
+    "month": "این ماه",
+    "all": "کل (از ابتدا)",
+}
+
+
+def _period_bounds(period: str) -> tuple[int | None, int | None]:
+    """Calendar-aligned start bound (Iran local time, week starting
+    Saturday) for a report period — "امروز"/"این هفته"/"این ماه" match the
+    admin's own clock, not a rolling window."""
+    now = datetime.datetime.now(_TEHRAN_TZ)
+    if period == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        days_since_sat = (now.weekday() - 5) % 7
+        start = (now - datetime.timedelta(days=days_since_sat)).replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        return None, None
+    return int(start.timestamp()), None
+
+
+def _format_order_line(o) -> str:
+    ts = datetime.datetime.fromtimestamp(o["created_at"], _TEHRAN_TZ).strftime("%Y-%m-%d %H:%M")
+    kind = f"تمدید «{o['renew_target_email']}»" if o["renew_target_email"] else o["plan_key"]
+    return f"#{o['id']} — {ts} — {kind} — {o['amount']:,} {config.CURRENCY_LABEL} — tg:{o['tg_id']} — {o['status']}"
+
+
+def _finance_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 امروز", callback_data="finrep:today"),
+         InlineKeyboardButton(text="📅 این هفته", callback_data="finrep:week")],
+        [InlineKeyboardButton(text="📅 این ماه", callback_data="finrep:month"),
+         InlineKeyboardButton(text="💼 کل (از ابتدا)", callback_data="finrep:all")],
+        [InlineKeyboardButton(text="📄 آخرین تراکنش‌ها", callback_data="finrep:recent")],
+        [InlineKeyboardButton(text="📝 بازه دلخواه", callback_data="finrep:custom")],
+        [InlineKeyboardButton(text="🔍 جستجوی تراکنش (اختلاف مالی)", callback_data="finrep:search")],
+    ])
+
+
 @router.message(F.text == "📊 گزارش مالی")
 async def financial_report(message: Message):
     if not _admin(message):
         return
-    periods = [("۲۴ ساعت گذشته", 24 * 3600), ("۷ روز گذشته", 7 * 24 * 3600),
-              ("۳۰ روز گذشته", 30 * 24 * 3600), ("کل دوران", None)]
-    lines = []
-    for label, seconds in periods:
-        cnt, total = db.report_since(seconds)
-        lines.append(f"{label}: {cnt} سفارش — {total:,} {config.CURRENCY_LABEL}")
-    await message.answer("📊 گزارش مالی:\n\n" + "\n".join(lines))
+    await message.answer("کدوم گزارش مالی رو می‌خوای؟", reply_markup=_finance_menu_keyboard())
+
+
+@router.callback_query(F.data.startswith("finrep:"))
+async def finance_menu_button(callback: CallbackQuery):
+    if not _admin(callback):
+        await callback.answer("فقط ادمین", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    await callback.answer()
+
+    if action in _FIN_PERIOD_LABELS:
+        start, end = _period_bounds(action)
+        cnt, total = db.report_between(start, end)
+        label = _FIN_PERIOD_LABELS[action]
+        await callback.message.answer(
+            f"📊 گزارش مالی — {label}:\n\n{cnt} سفارش تایید‌شده — {total:,} {config.CURRENCY_LABEL}"
+        )
+        return
+
+    if action == "recent":
+        orders = db.recent_approved_orders(10)
+        if not orders:
+            await callback.message.answer("هنوز تراکنش تایید‌شده‌ای ثبت نشده.")
+            return
+        lines = [_format_order_line(o) for o in orders]
+        await callback.message.answer("📄 ۱۰ تراکنش اخیر:\n\n" + "\n".join(lines))
+        return
+
+    if action == "custom":
+        _pending[callback.from_user.id] = {"action": "fin_custom_range"}
+        await callback.message.answer(
+            "گزارش چند روز اخیر رو می‌خوای؟ فقط عدد روز رو بفرست (مثلاً 15). /cancel برای لغو."
+        )
+        return
+
+    if action == "search":
+        _pending[callback.from_user.id] = {"action": "fin_search_amount"}
+        await callback.message.answer(
+            "مبلغ تراکنشی که دنبالشی رو بفرست (فقط عدد، بدون واحد و بدون جداکننده). /cancel برای لغو."
+        )
+        return
+
+
+async def _do_fin_custom_range(message: Message, text: str):
+    try:
+        days = int(text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("عدد نامعتبر — فقط تعداد روز رو بفرست (مثلاً 15).")
+        return
+    start = int(time.time()) - days * 86400
+    cnt, total = db.report_between(start, None)
+    await message.answer(
+        f"📊 گزارش مالی — {days} روز اخیر:\n\n{cnt} سفارش تایید‌شده — {total:,} {config.CURRENCY_LABEL}"
+    )
+
+
+async def _do_fin_search_amount(message: Message, text: str):
+    digits = re.sub(r"[^\d]", "", text)
+    if not digits:
+        await message.answer("لطفاً فقط عدد مبلغ رو بفرست.")
+        return
+    amount = int(digits)
+    orders = db.search_orders_by_amount(amount, 10)
+    if not orders:
+        await message.answer(f"هیچ سفارشی با مبلغ {amount:,} پیدا نشد.")
+        return
+    lines = [_format_order_line(o) for o in orders]
+    await message.answer(
+        f"🔍 {len(orders)} سفارش با مبلغ {amount:,} {config.CURRENCY_LABEL}:\n\n" + "\n".join(lines)
+    )
 
 
 @router.message(F.text == "🧾 سفارش‌های اخیر")
@@ -1702,6 +1817,13 @@ async def ask_delete_client(message: Message):
     await clientlist.show_action_list(message, "delete")
 
 
+@router.message(F.text == "🔒 لیست مسدودی‌ها")
+async def blocked_clients_list(message: Message):
+    if not _admin(message):
+        return
+    await clientlist.show_blocked_list(message)
+
+
 # ---------------------------------------------------------------- bulk renew / bulk delete expired
 
 @router.message(F.text == "🔄 تمدید انبوه")
@@ -1897,6 +2019,10 @@ async def handle_pending(message: Message):
         await _do_ws_tls_setup(message, text)
     elif action == "broadcast":
         await _do_broadcast(message, message.text)
+    elif action == "fin_custom_range":
+        await _do_fin_custom_range(message, text)
+    elif action == "fin_search_amount":
+        await _do_fin_search_amount(message, text)
     elif action == "unban_ip":
         await _do_unban(message, text)
     elif action == "bulk_renew":
