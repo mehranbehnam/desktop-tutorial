@@ -163,7 +163,7 @@ MENU_FINANCE = ReplyKeyboardMarkup(
 
 MENU_SALES = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🛒 خرید سرویس"), KeyboardButton(text="📦 خرید عمده")],
+        [KeyboardButton(text="📦 خرید عمده"), KeyboardButton(text="🛒 خرید سرویس")],
         [KeyboardButton(text="🔄 تمدید سرویس"), KeyboardButton(text="🧪 تست")],
         [KeyboardButton(text="📶 وضعیت سرویس من"), KeyboardButton(text="♻️ دریافت دوباره لینک")],
         [KeyboardButton(text="🆘 پشتیبانی")],
