@@ -1,7 +1,7 @@
 import logging
 
 from aiogram import Bot, F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 import config
 import db
@@ -116,13 +116,34 @@ async def receive_receipt(message: Message, bot: Bot):
         f"پلن: {order['gb']} گیگ / {order['days']} روز{qty_note}\n"
         f"مبلغ: {order['amount']:,} {config.CURRENCY_LABEL}"
     )
-    for admin_id in config.ADMIN_IDS:
+    kb = admin_review_keyboard(order_id)
+
+    # Review requests always go out through the dev bot, never through
+    # whichever bot actually received the purchase — otherwise an admin
+    # testing a purchase from their own account sees the approve/reject
+    # buttons mixed into their own customer-facing chat instead of in
+    # "IRAN VPN DEVELOPER" where every other admin action lives, and the
+    # sales bot's DM history ends up holding payment-approval controls.
+    if config.DEV_BOT_TOKEN and config.DEV_BOT_TOKEN != config.BOT_TOKEN:
+        raw = (await bot.download(photo.file_id)).read()
+        review_bot = Bot(token=config.DEV_BOT_TOKEN)
         try:
-            await bot.send_photo(
-                admin_id, photo.file_id, caption=caption, reply_markup=admin_review_keyboard(order_id)
-            )
-        except Exception:
-            log.exception("failed to notify admin %s", admin_id)
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await review_bot.send_photo(
+                        admin_id, BufferedInputFile(raw, filename="receipt.jpg"),
+                        caption=caption, reply_markup=kb,
+                    )
+                except Exception:
+                    log.exception("failed to notify admin %s via dev bot", admin_id)
+        finally:
+            await review_bot.session.close()
+    else:
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await bot.send_photo(admin_id, photo.file_id, caption=caption, reply_markup=kb)
+            except Exception:
+                log.exception("failed to notify admin %s", admin_id)
 
     await message.answer("رسید شما دریافت شد و برای بررسی ارسال شد. لطفاً چند دقیقه صبر کن.")
 
@@ -141,6 +162,12 @@ async def provision_order(bot: Bot, order_id: int) -> tuple[bool, str]:
     if order["status"] != "awaiting_review":
         return False, "این سفارش قبلاً پردازش شده"
 
+    # Deliver to the customer via the sales bot specifically, regardless of
+    # which bot's chat this order got approved from — approval now always
+    # happens in the dev bot (see receive_receipt), but the customer only
+    # ever started a conversation with the sales bot, never the dev one.
+    delivery_bot = Bot(token=config.BOT_TOKEN) if config.BOT_TOKEN and config.BOT_TOKEN != bot.token else bot
+
     xui = XUIClient()
     quantity = order["quantity"] or 1
     last_email = ""
@@ -155,7 +182,7 @@ async def provision_order(bot: Bot, order_id: int) -> tuple[bool, str]:
             db.save_client(email, order["tg_id"], client["uuid"], order["gb"], client["expiry_time"])
             link = xui.build_vless_link(client["uuid"], email)
             sub_url = xui.get_sub_url(email)
-            await send_service_pack_to(bot, order["tg_id"], email, link, sub_url,
+            await send_service_pack_to(delivery_bot, order["tg_id"], email, link, sub_url,
                                         header="✅ پرداخت تایید شد و سرویس شما فعال شد!")
             last_email = email
         else:
@@ -170,11 +197,14 @@ async def provision_order(bot: Bot, order_id: int) -> tuple[bool, str]:
                 sub_url = xui.get_sub_url(email)
                 header = ("✅ پرداخت تایید شد و سرویس شما فعال شد!" if quantity == 1
                           else f"✅ اکانت {i+1} از {quantity}:")
-                await send_service_pack_to(bot, order["tg_id"], email, link, sub_url, header=header)
+                await send_service_pack_to(delivery_bot, order["tg_id"], email, link, sub_url, header=header)
                 last_email = email
     except Exception as e:
         log.exception("XUI provisioning failed for order %s", order_id)
         return False, f"{type(e).__name__}: {e}"
+    finally:
+        if delivery_bot is not bot:
+            await delivery_bot.session.close()
 
     db.set_order_status(order_id, "approved", xui_email=last_email)
     _awaiting_receipt.pop(order["tg_id"], None)
