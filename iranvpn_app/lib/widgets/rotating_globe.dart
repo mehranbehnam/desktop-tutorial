@@ -109,15 +109,15 @@ class _GlobePainter extends CustomPainter {
 
   void _paintSphere(Canvas canvas, Offset center, double radius) {
     final lightOffset = Offset(-radius * 0.35, -radius * 0.4);
-    final gradient = RadialGradient(
+    const gradient = RadialGradient(
       center: Alignment(-0.35, -0.4),
       radius: 0.95,
-      colors: const [
+      colors: [
         AppColors.globeRim,
         AppColors.globeCore,
         AppColors.globeShadow,
       ],
-      stops: const [0.0, 0.55, 1.0],
+      stops: [0.0, 0.55, 1.0],
     );
     final rect = Rect.fromCircle(center: center, radius: radius);
     final paint = Paint()..shader = gradient.createShader(rect);

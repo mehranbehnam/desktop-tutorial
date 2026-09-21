@@ -77,7 +77,7 @@ class _FlyingPlanesState extends State<FlyingPlanes>
         opacity: opacity,
         child: Transform.rotate(
           angle: heading,
-          child: Icon(Icons.send_rounded, size: 14, color: AppColors.textPrimary),
+          child: const Icon(Icons.send_rounded, size: 14, color: AppColors.textPrimary),
         ),
       ),
     );
