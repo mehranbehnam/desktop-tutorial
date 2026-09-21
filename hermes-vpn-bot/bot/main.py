@@ -31,23 +31,36 @@ async def _setup_commands(bot: Bot):
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
     # A command set at one time (by this code, an older version of it, or
-    # by hand through @BotFather's /setcommands) can be scoped more
-    # specifically than BotCommandScopeDefault — e.g. all-private-chats —
-    # in which case setting only the default scope, as this used to do,
-    # never overrides it: Telegram shows the most specific scope that has
-    # commands. Explicitly wiping every scope this bot could plausibly
-    # have commands under (a stray "/report" being the concrete case that
-    # kept showing up) guarantees COMMANDS_DEFAULT is really the only
-    # thing left, regardless of how the old command got set.
-    for scope in (
+    # by hand through @BotFather's "Edit Commands") can be scoped more
+    # specifically than BotCommandScopeDefault (e.g. all-private-chats),
+    # or set for a specific language_code (BotFather lets you set a
+    # separate command list per language, and this is a Farsi-facing
+    # bot) — either one outranks a plain default-scope, no-language
+    # update and keeps showing. Wiping every (scope, language_code)
+    # combination this bot could plausibly have commands under, and
+    # logging what get_my_commands actually reports for each right
+    # after, means a stray command either provably goes away here or
+    # the next restart's log says exactly where it's still coming from.
+    scopes = (
         BotCommandScopeDefault(),
         BotCommandScopeAllPrivateChats(),
         BotCommandScopeAllGroupChats(),
         BotCommandScopeAllChatAdministrators(),
-    ):
-        await bot.delete_my_commands(scope=scope)
+    )
+    for scope in scopes:
+        for lang in (None, "fa", "en"):
+            await bot.delete_my_commands(scope=scope, language_code=lang)
 
     await bot.set_my_commands(COMMANDS_DEFAULT)
+
+    for scope in scopes:
+        for lang in (None, "fa"):
+            leftover = await bot.get_my_commands(scope=scope, language_code=lang)
+            if leftover and [c.command for c in leftover] != [c.command for c in COMMANDS_DEFAULT]:
+                logging.warning(
+                    "stray bot commands survived under scope=%s lang=%s: %s",
+                    type(scope).__name__, lang, [c.command for c in leftover],
+                )
 
 
 async def main():

@@ -45,20 +45,35 @@ async def main():
     # doesn't change what that button looks like or does.
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
-    # Wipe every scope this bot could have commands under before setting
-    # the real list — a command set under a more specific scope (e.g.
-    # all-private-chats, whether by an old version of this code or by
-    # hand through @BotFather) outranks BotCommandScopeDefault and would
-    # otherwise keep showing up no matter what COMMANDS is set to.
-    for scope in (
+    # Wipe every (scope, language_code) combination this bot could have
+    # commands under before setting the real list — a command set under a
+    # more specific scope (e.g. all-private-chats) or a specific
+    # language_code (BotFather lets you set a separate list per language,
+    # and this is a Farsi-facing bot), whether by an old version of this
+    # code or by hand through @BotFather, outranks a plain default-scope
+    # update and would otherwise keep showing up regardless of what
+    # COMMANDS is set to. Logging what's left after confirms it worked,
+    # or says exactly where a survivor is still coming from.
+    scopes = (
         BotCommandScopeDefault(),
         BotCommandScopeAllPrivateChats(),
         BotCommandScopeAllGroupChats(),
         BotCommandScopeAllChatAdministrators(),
-    ):
-        await bot.delete_my_commands(scope=scope)
+    )
+    for scope in scopes:
+        for lang in (None, "fa", "en"):
+            await bot.delete_my_commands(scope=scope, language_code=lang)
 
     await bot.set_my_commands(COMMANDS)
+
+    for scope in scopes:
+        for lang in (None, "fa"):
+            leftover = await bot.get_my_commands(scope=scope, language_code=lang)
+            if leftover and [c.command for c in leftover] != [c.command for c in COMMANDS]:
+                logging.warning(
+                    "stray bot commands survived under scope=%s lang=%s: %s",
+                    type(scope).__name__, lang, [c.command for c in leftover],
+                )
 
     # devmenu/ops first: their pending-action dispatchers only fire when an
     # admin has an open multi-step flow, so they never shadow the sales
