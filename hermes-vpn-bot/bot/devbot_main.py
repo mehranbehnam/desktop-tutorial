@@ -2,7 +2,14 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, MenuButtonCommands
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    MenuButtonCommands,
+)
 
 import config
 import db
@@ -37,6 +44,20 @@ async def main():
     # keyboard-toggle icon — set_my_commands alone populates the list but
     # doesn't change what that button looks like or does.
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+    # Wipe every scope this bot could have commands under before setting
+    # the real list — a command set under a more specific scope (e.g.
+    # all-private-chats, whether by an old version of this code or by
+    # hand through @BotFather) outranks BotCommandScopeDefault and would
+    # otherwise keep showing up no matter what COMMANDS is set to.
+    for scope in (
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ):
+        await bot.delete_my_commands(scope=scope)
+
     await bot.set_my_commands(COMMANDS)
 
     # devmenu/ops first: their pending-action dispatchers only fire when an

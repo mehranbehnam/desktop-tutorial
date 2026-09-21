@@ -2,7 +2,14 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, MenuButtonCommands
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    MenuButtonCommands,
+)
 
 import config
 import db
@@ -22,6 +29,24 @@ async def _setup_commands(bot: Bot):
     # keyboard-toggle icon — set_my_commands alone populates the list but
     # doesn't change what that button looks like or does.
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+    # A command set at one time (by this code, an older version of it, or
+    # by hand through @BotFather's /setcommands) can be scoped more
+    # specifically than BotCommandScopeDefault — e.g. all-private-chats —
+    # in which case setting only the default scope, as this used to do,
+    # never overrides it: Telegram shows the most specific scope that has
+    # commands. Explicitly wiping every scope this bot could plausibly
+    # have commands under (a stray "/report" being the concrete case that
+    # kept showing up) guarantees COMMANDS_DEFAULT is really the only
+    # thing left, regardless of how the old command got set.
+    for scope in (
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+        BotCommandScopeAllGroupChats(),
+        BotCommandScopeAllChatAdministrators(),
+    ):
+        await bot.delete_my_commands(scope=scope)
+
     await bot.set_my_commands(COMMANDS_DEFAULT)
 
 
