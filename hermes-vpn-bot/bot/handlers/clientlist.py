@@ -452,8 +452,8 @@ async def cancel(message: Message):
         await message.answer("لغو شد.")
 
 
-def _detail_keyboard(email: str, enabled: bool) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def _detail_keyboard(email: str, enabled: bool, connect_link: str = "") -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton(
             text="🔓 فعال کن" if not enabled else "🔒 مسدود کن",
             callback_data=f"cl:togask:{email}",
@@ -462,9 +462,12 @@ def _detail_keyboard(email: str, enabled: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"cl:refresh:{email}")],
         [InlineKeyboardButton(text="🔁 تمدید همین اکانت", callback_data=f"cl:renew:{email}"),
          InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"cl:rename:{email}")],
-        [InlineKeyboardButton(text=f"⬇️ دانلود {config.APP_NAME}", url=config.APP_DOWNLOAD_URL)],
-        [InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")],
-    ])
+    ]
+    if connect_link:
+        rows.append([InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(connect_link))])
+    rows.append([InlineKeyboardButton(text=f"⬇️ دانلود {config.APP_NAME}", url=config.APP_DOWNLOAD_URL)])
+    rows.append([InlineKeyboardButton(text="◀️ برگشت به لیست", callback_data="cl:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.callback_query(F.data.startswith("cl:refresh:"))
@@ -618,15 +621,12 @@ async def show_detail(message: Message, email: str):
     if sub_url:
         lines.append(f"لینک اشتراک:\n{sub_url}")
 
-    if t.get("uuid"):
-        # Text link, not a button: Telegram rejected the hermesvpn:// scheme
-        # as a button URL (BUTTON_URL_INVALID). An <a href> in the text
-        # itself is safe with any scheme.
-        link = x.build_vless_link(t["uuid"], email)
-        lines.append(f'\n📎 <a href="{app_connect_link(link)}">اتصال به {config.APP_NAME}</a>')
+    connect_link = x.build_vless_link(t["uuid"], email) if t.get("uuid") else ""
 
     if not db.has_approved_order(email):
         lines.append("")
         lines.append("خریدی ثبت نشده (احتمالاً دستی ساخته شده).")
 
-    await message.answer("\n".join(lines), reply_markup=_detail_keyboard(email, enabled), parse_mode="HTML")
+    await message.answer(
+        "\n".join(lines), reply_markup=_detail_keyboard(email, enabled, connect_link), parse_mode="HTML"
+    )

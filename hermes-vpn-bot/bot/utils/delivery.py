@@ -1,25 +1,35 @@
 """Deliver a service to a user as one package: link, subscription, QR.
 
-Every delivered link ends with one single "📎 اتصال به نرم‌افزار" link —
-hermesvpn://import?url=... — that opens the client app with this exact
-config already imported (tap Connect and done) if it's installed, or does
-nothing if it isn't. The raw links stay visible too (as tap-to-copy code
-blocks) for anyone who wants to paste them elsewhere, into a different
-client, or to grab the APK separately.
+Every delivered link ends with one single "📎 اتصال به نرم‌افزار" button —
+an https link (Cloudflare Tunnel -> nginx landing page) that immediately
+redirects into hermesvpn://import?url=..., opening the client app with this
+exact config already imported (tap Connect and done) if it's installed, or
+offering the APK download if it isn't. Telegram refuses hermesvpn:// itself
+as a button URL or even as a clickable text link, so the https page is the
+only way to make this a real tappable button. The raw links stay visible
+too (as tap-to-copy code blocks) for anyone who wants to paste them
+elsewhere, into a different client, or to grab the APK separately.
 """
 import io
 from urllib.parse import quote
 
 import qrcode
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config
 
 
 def app_connect_link(link: str) -> str:
-    """Deep link into the client app (see android's intent-filter for the
-    "hermesvpn" scheme) that auto-imports `link` as the active config."""
-    return f"hermesvpn://import?url={quote(link, safe='')}"
+    """https landing page that redirects into the client app (see
+    android's intent-filter for the "hermesvpn" scheme) with `link`
+    already filled in as the active config."""
+    return f"{config.APP_CONNECT_REDIRECT_URL}?url={quote(link, safe='')}"
+
+
+def connect_keyboard(link: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📎 اتصال به نرم‌افزار", url=app_connect_link(link))]
+    ])
 
 
 def escape_markdown(text: str) -> str:
@@ -47,7 +57,6 @@ def build_caption(email: str, link: str, sub_url: str = "", header: str = "") ->
             "\n📡 لینک اشتراک/ساب (بزن تا کپی بشه):\n`" + sub_url + "`"
             "\n_با این لینک، سرویس در برنامه خودکار به‌روز می‌شود._"
         )
-    parts.append(f"\n📎 [اتصال به نرم‌افزار]({app_connect_link(link)})")
     parts.append("\n📱 یا کد QR بالا را در v2rayNG / NekoBox / Streisand اسکن کن.")
     return "\n".join(parts)
 
@@ -68,21 +77,23 @@ async def send_service_pack(message: Message, email: str, link: str, sub_url: st
     working after a renewal; otherwise it encodes the connection link.
     """
     caption = build_caption(email, link, sub_url, header)
+    kb = connect_keyboard(link)
     try:
         await message.answer_photo(
-            make_qr(sub_url or link), caption=caption, parse_mode="Markdown"
+            make_qr(sub_url or link), caption=caption, parse_mode="Markdown", reply_markup=kb
         )
     except Exception:
         # Never lose the config because the image could not be sent.
-        await message.answer(caption, parse_mode="Markdown")
+        await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
 
 
 async def send_service_pack_to(bot, chat_id: int, email: str, link: str, sub_url: str = "", header: str = ""):
     """Same package, addressed to a chat id (used when an admin approves an order)."""
     caption = build_caption(email, link, sub_url, header)
+    kb = connect_keyboard(link)
     try:
         await bot.send_photo(
-            chat_id, make_qr(sub_url or link), caption=caption, parse_mode="Markdown",
+            chat_id, make_qr(sub_url or link), caption=caption, parse_mode="Markdown", reply_markup=kb,
         )
     except Exception:
-        await bot.send_message(chat_id, caption, parse_mode="Markdown")
+        await bot.send_message(chat_id, caption, parse_mode="Markdown", reply_markup=kb)

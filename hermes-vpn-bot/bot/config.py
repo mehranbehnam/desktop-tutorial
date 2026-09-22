@@ -69,6 +69,12 @@ TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 APP_NAME = os.getenv("APP_NAME", "HermesVPN Connect")
 APP_DOWNLOAD_URL = os.getenv("APP_DOWNLOAD_URL", "https://app.acropolpalace.com/app/HermesVPN-Connect.apk")
 
+# https landing page (Cloudflare Tunnel -> nginx) that redirects into the
+# app's hermesvpn://import custom scheme. Telegram refuses custom schemes
+# as button URLs or as clickable text links, so every "connect" link has to
+# go through this https intermediary instead of hermesvpn:// directly.
+APP_CONNECT_REDIRECT_URL = os.getenv("APP_CONNECT_REDIRECT_URL", "https://connect.acropolpalace.com/")
+
 # Edit prices/plans freely. gb=0 means unlimited data (only time-limited).
 PLANS = [
     {"key": "p20_30", "label": "20 گیگ / 30 روز", "gb": 20, "days": 30, "price": 149},
