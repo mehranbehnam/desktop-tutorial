@@ -66,3 +66,36 @@ jobs:
             Emulator/x86_64: iranvpn-*-x86_64.apk
           prerelease: true
           files: iranvpn_app/build/app/outputs/flutter-apk/iranvpn-${{ github.run_number }}-*.apk
+
+      # Every "دانلود نرم‌افزار" button the bot/redirect page sends out
+      # points at this one stable URL. Refresh it with this build's arm64
+      # APK (the ABI virtually every phone needs) so the file customers
+      # download always matches the deep-link support the bots expect —
+      # a stale copy here previously meant the "باز کردن در نرم‌افزار"
+      # button did nothing because no installed app claimed the scheme.
+      - name: Flatten the arm64 APK for upload
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk HermesVPN-Connect.apk
+
+      - name: Upload it to the redirect server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.NAUTILUS_HOST }}
+          port: ${{ secrets.NAUTILUS_PORT }}
+          username: ${{ secrets.NAUTILUS_USER }}
+          password: ${{ secrets.NAUTILUS_PASSWORD }}
+          source: "iranvpn_app/HermesVPN-Connect.apk"
+          target: "/tmp"
+          strip_components: 1
+
+      - name: Move the uploaded APK into place
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.NAUTILUS_HOST }}
+          port: ${{ secrets.NAUTILUS_PORT }}
+          username: ${{ secrets.NAUTILUS_USER }}
+          password: ${{ secrets.NAUTILUS_PASSWORD }}
+          script: |
+            set -e
+            sudo mv /tmp/HermesVPN-Connect.apk /var/www/connect/HermesVPN-Connect.apk
+            sudo chmod 644 /var/www/connect/HermesVPN-Connect.apk
+            echo "refreshed /var/www/connect/HermesVPN-Connect.apk"
