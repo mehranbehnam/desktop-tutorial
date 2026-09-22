@@ -67,13 +67,7 @@ TRIAL_HOURS = int(os.getenv("TRIAL_HOURS", "1"))
 # config (see utils/delivery.py: APP_DOWNLOAD_URL for "download the app",
 # app_connect_link() for "open it with this config already filled in").
 APP_NAME = os.getenv("APP_NAME", "HermesVPN Connect")
-# app.acropolpalace.com is a separate, unmanaged server that was serving a
-# stale APK predating the hermesvpn:// deep-link support entirely — button
-# taps silently did nothing because no installed app claimed that scheme.
-# The APK now lives next to the redirect page itself (same server, kept in
-# sync with the latest build we control), so this always matches what
-# app_connect_link() expects the installed app to handle.
-APP_DOWNLOAD_URL = os.getenv("APP_DOWNLOAD_URL", "https://connect.acropolpalace.com/HermesVPN-Connect.apk")
+APP_DOWNLOAD_URL = os.getenv("APP_DOWNLOAD_URL", "https://app.acropolpalace.com/app/HermesVPN-Connect.apk")
 
 # https landing page (Cloudflare Tunnel -> nginx) that redirects into the
 # app's hermesvpn://import custom scheme. Telegram refuses custom schemes
